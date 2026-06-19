@@ -1,0 +1,128 @@
+<div align="center">
+
+# nanoMoLa
+
+**The sparse, frontier sequel to [modern-nanoGPT](https://github.com/LeonelSalvo/modern-nanoGPT): a GPT built from scratch with the two pieces that define a 2026 frontier open model — `MoE` + `MLA` — plus the tools to actually *measure* what they do.**
+
+`Mo`E + M`La` → **MoLa**
+
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.1+-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+</div>
+
+---
+
+## Why this exists
+
+[`modern-nanoGPT`](https://github.com/LeonelSalvo/modern-nanoGPT) is a **dense** Llama-style transformer — the shared backbone of every open LLM. The 2026 frontier (DeepSeek-V3, Kimi K2, GLM, Qwen3-MoE) is **sparse**, and converges on one template:
+
+> **MoE** (sparse experts instead of one dense FFN) **+ MLA** (latent-compressed attention instead of plain MHA/GQA).
+
+`nanoMoLa` implements those two from scratch, **and** ships the measurement tools that make the result interesting: a labeled multi-domain corpus, a router-specialization probe, and a feature ablation.
+
+## Dense → frontier: the two swaps
+
+| dense (modern-nanoGPT) | frontier (this repo) | what changes |
+|---|---|---|
+| one SwiGLU FFN per block | **MoE** — N expert FFNs + a top-k router (+ a shared expert) | huge total params, few **active** per token |
+| GQA attention | **MLA** (Multi-head Latent Attention) | KV cache compressed to a latent vector, with decoupled RoPE |
+
+Everything else (RMSNorm, RoPE, pre-norm + residual, tied/no-bias) is reused from the dense baseline.
+
+## Frontier add-ons (toggleable flags)
+
+On top of MoE + MLA, a few small 2026 features, each a flag on `MoLaConfig` so the ablation can turn them on/off — full record (applied / queued / dropped + why) in [`FEATURES.md`](FEATURES.md):
+
+- **#1 aux-loss-free load balancing** (DeepSeek bias trick) — keeps experts evenly used without an extra loss.
+- **#5 QK-Norm** — RMSNorm on q/k before attention (stability; replaced Gemma's logit soft-capping).
+- **#9 sandwich norm** — normalize each sub-layer's input *and* output (Gemma 2 / OLMo 2).
+
+## Build it step by step
+
+Same approach as modern-nanoGPT: one piece at a time, each a self-checking script.
+
+```
+steps/
+├── 01_moe.py            # MoE block: router (top-k) + experts + shared expert
+├── 02_mla.py            # Multi-head Latent Attention: KV compression + decoupled RoPE
+├── 03_block_model.py    # assemble the sparse block + full model (+ the toggleable flags)
+├── 04_train.py          # train + the sparse story in numbers (active params, KV cache)
+├── 05_multidomain.py    # a LABELED multi-domain corpus (drama / code / Spanish)
+├── 06_routing_probe.py  # do experts specialize? domain→expert heatmap + the balancing tradeoff
+├── 07_ablation.py       # isolate each piece: dense / +MoE / +MLA / both
+├── 08_kv_cache.py       # real KV-cache for MLA → O(T) generation (cached == parallel)
+├── 09_bpe.py            # BPE tokenizer from scratch (exact round-trip, shorter sequences)
+├── 10_mtp.py            # Multi-Token Prediction: a 2nd head predicts t+2
+└── 11_muon.py           # the Muon optimizer (orthogonalized momentum), from scratch
+```
+
+```bash
+python -m venv .venv && source .venv/bin/activate   # on Debian/Ubuntu use python3
+pip install -r requirements.txt
+bash run_all.sh            # runs every step + regenerates the result images (~15 min)
+# or one at a time: python steps/01_moe.py  → 02 → 03 → ...
+```
+
+## Results
+
+Trained from scratch on a single RTX 3090.
+
+**The model (char-level, TinyShakespeare).** ~1.4M params, **36% active per token** (MoE), and MLA caches **40 floats/token vs 128 for full attention** (31%). Best val loss ≈ **1.57** (with QK-Norm + sandwich-norm + load balancing on) — close to the dense baseline (modern-nanoGPT, val ≈ 1.48 at ~9M params), which is the honest, expected result: at nano scale a small sparse model trades a little quality for the structural wins; the point is the **mechanism**, not beating dense.
+
+![loss curve](loss_curve.png)
+
+### Finding 1 — the balancing ↔ specialization tradeoff
+
+On a labeled 3-domain corpus (English drama · Python code · Spanish prose), I measured how strongly the router sends each domain to different experts, via the mutual information `I(domain ; expert)`:
+
+| load balancing | I(domain ; expert) |
+|---|---|
+| **OFF** | **0.075 bits** — more specialization, but risks expert collapse |
+| **ON** | **0.072 bits** — experts evenly used, but flatter routing |
+
+Across runs, **OFF consistently shows equal-or-higher specialization than ON** — load balancing buys stability at the cost of specialization. At nano scale the gap is small and a bit noisy (MI stays far below the 1.585-bit ceiling), but the direction is reproducible. Heatmaps: `routing_heatmap_lb-on.png`, `routing_heatmap_lb-off.png`.
+
+### Finding 2 — ablation: what each piece buys
+
+Four variants, same multi-domain data, same steps (`python steps/07_ablation.py`):
+
+| variant | attention | FFN | val loss | total | active/tok | KV/tok |
+|---|---|---|---|---|---|---|
+| dense | GQA | SwiGLU | 1.665 | 198K | 198K | 64 |
+| +MoE | GQA | MoE | **1.496** | 1380K | 495K | 64 |
+| +MLA | MLA | SwiGLU | 1.670 | 216K | 216K | **40** |
+| both | MLA | MoE | 1.602 | 1398K | 513K | **40** |
+
+![ablation](ablation.png)
+
+The two pieces do **different jobs**, and the ablation isolates each cleanly:
+
+- **MoE is the quality lever** — biggest val-loss drop (1.674 → 1.496) by adding capacity (huge total params, only ~36% active per token).
+- **MLA is the memory lever** — on its own it's ~neutral on loss (1.674 → 1.691) but shrinks the KV cache to **40 vs 64 floats/token (−37%)**. Its win is the cache, not the loss.
+- **both** = nanoMoLa: keeps most of MoE's quality gain *and* MLA's smaller cache, with a small quality give-back from compressing attention — the expected tradeoff.
+
+<sub>At nano scale these gaps are modest, but the directions are clean and the structural numbers (active params, KV cache) hold at any scale.</sub>
+
+## What this is for
+
+nanoMoLa is a **learning + portfolio artifact**, not a model to deploy. Its purpose is twofold: implement the 2026 frontier sparse template (MoE + MLA) **from scratch**, and — the part that makes it more than a re-implementation — build the **instruments to study it**: a labeled multi-domain corpus, a router-specialization probe, and a feature ablation. At nano scale the val loss isn't the point; the value is (a) understanding each piece down to the tensor, and (b) being able to **measure** what each piece actually buys (see the two findings above).
+
+## How to scale beyond nano
+
+Three directions, roughly by effort:
+
+**Make it bigger (stop being nano).** Swap char-level for the BPE tokenizer (step 9) on a real corpus (FineWeb-Edu or a domain mix) and bump `n_layer / n_embd / block_size`. Wire the demonstrated features (steps 8–11) into the trained model: KV-cache generation, the MTP head, training with Muon. Add bf16 + `torch.compile`, gradient accumulation, and a **batched MoE kernel** — the Python expert loop is the real bottleneck, and a Triton fused kernel is the natural next exercise.
+
+**Push the architecture toward the real frontier.** DeepSeek Sparse Attention (DSA) or a linear-attention / gated-DeltaNet hybrid (Qwen3-Next) for cheap long context; a Mamba/SSM block for a transformer-vs-SSM head-to-head; fine-grained experts, expert-parallel routing, capacity factors.
+
+**Keep finding things (what this repo is built for).** Re-run the routing probe at larger scale or with `top_k=1` and see if specialization (MI) rises. Ablate the *stabilizers* (`qk_norm`, `post_norm`, `load_balance`) on val loss, not just the big pieces. Measure the KV-cache memory and tokens/sec gap (MLA vs GQA vs MHA) **as context grows** — that's where MLA actually pays off. And an SFT step (→ DPO/GRPO) turns the base model into a chat-y one (the nanochat direction).
+
+## Credits
+
+Architecture from the DeepSeek-V2/V3 papers (MLA + DeepSeekMoE) and the Shazeer/Switch line of MoE work; built from scratch in the spirit of Karpathy's nanoGPT. Dense baseline: [modern-nanoGPT](https://github.com/LeonelSalvo/modern-nanoGPT).
+
+## License
+
+MIT — see [LICENSE](LICENSE). Built by [Leonel Salvo](https://github.com/LeonelSalvo).

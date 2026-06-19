@@ -1,0 +1,13 @@
+# environment
+.venv/
+__pycache__/
+*.pyc
+
+# data, checkpoints and generated artifacts
+data/
+*.pt
+*.ckpt
+samples.txt
+
+# personal scratch notes (kept local)
+notes.md
