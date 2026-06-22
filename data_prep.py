@@ -27,7 +27,7 @@ import tarfile
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DOM  = os.path.join(HERE, "data", "domains")
+DOM  = os.path.join(HERE, "data", "corpus")          # separate from the char-level data/domains/
 MB   = float(os.environ.get("MB_PER_DOMAIN", "8"))
 CAP  = int(MB * 1024 * 1024)
 
@@ -106,7 +106,7 @@ def main():
         with open(os.path.join(DOM, f"{name}.txt"), "w", encoding="utf-8") as f:
             f.write(b)
         print(f"  ✓ {name}.txt  {len(b)/1e6:.1f}M chars")
-    print("[data_prep] done. Now build the tokenizer/data with TOKENIZER=bpe (see bpe_data.py).")
+    print(f"[data_prep] done → {DOM}. Now run with TOKENIZER=bpe (bpe_data.py reads this folder).")
 
 
 if __name__ == "__main__":

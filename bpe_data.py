@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 HERE  = os.path.dirname(os.path.abspath(__file__))
-DOM   = os.path.join(HERE, "data", "domains")
+DOM   = os.path.join(HERE, "data", "corpus")          # written by data_prep.py (balanced, big)
 CACHE = os.path.join(HERE, "data", "bpe")
 VOCAB = int(os.environ.get("BPE_VOCAB", "16000"))
 
@@ -30,7 +30,7 @@ class BpeMultiDomain:
         from tokenizers import ByteLevelBPETokenizer            # imported lazily (only the BPE path needs it)
         files = sorted(glob.glob(os.path.join(DOM, "*.txt")))
         if not files:
-            raise FileNotFoundError(f"no domain files in {DOM} — run data_prep.py first")
+            raise FileNotFoundError(f"no corpus files in {DOM} — run `python data_prep.py` first")
         self.names = [os.path.splitext(os.path.basename(f))[0] for f in files]
         os.makedirs(CACHE, exist_ok=True)
 
