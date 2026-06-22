@@ -54,8 +54,9 @@ echo "### train + measure ###"
 "$PY" steps/07_ablation.py                       # ablation.png
 
 # 5) the full stack-ablation matrix (each technique ON vs OFF) --------------
-echo "### stack ablation matrix (scale=$SCALE) ###"
-SCALE="$SCALE" "$PY" steps/12_stack_ablation.py
+#    SEEDS>1 reports mean ± std (the error bar that tells signal from noise). Default 1 for speed.
+echo "### stack ablation matrix (scale=$SCALE, seeds=${SEEDS:-1}) ###"
+SCALE="$SCALE" SEEDS="${SEEDS:-1}" "$PY" steps/12_stack_ablation.py
 
 echo
 echo "### DONE — everything ran (scale=$SCALE). Result images + the printed matrix above. ###"

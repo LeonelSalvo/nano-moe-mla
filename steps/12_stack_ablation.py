@@ -16,12 +16,17 @@ Scale (sized for a single 24 GB GPU, e.g. RTX 3090):
   SCALE=micro           — the real run: ~6 layers / 384 dim / 16 experts / block 512.
 For meaningful MI, download real domain files first (see steps/05_multidomain.py) and SCALE=micro.
 
-Run:  python steps/12_stack_ablation.py
-      SCALE=micro python steps/12_stack_ablation.py
+Run:  python steps/12_stack_ablation.py                  # nano, 1 seed (fast smoke)
+      SEEDS=3 SCALE=micro python steps/12_stack_ablation.py   # the real measurement, mean ± std
+
+Knobs (env): SCALE=nano|micro · SEEDS=N (runs per setting → error bar) · LR=3e-4.
+Reporting mean ± std over seeds is what separates a real effect from noise: if two settings'
+error bars overlap, the difference isn't significant at this scale — and that's an honest result.
 """
 
 import os
 import math
+import statistics
 import importlib.util
 import torch
 import torch.nn.functional as F
@@ -41,22 +46,31 @@ MoeMlaGPT, MoeMlaConfig = m3.MoeMlaGPT, m3.MoeMlaConfig
 CharMultiDomain, load_domains = m5.CharMultiDomain, m5.load_domains
 Muon = mMuon.Muon
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-SCALE  = os.environ.get("SCALE", "nano")
-torch.manual_seed(1337)
+device  = "cuda" if torch.cuda.is_available() else "cpu"
+SCALE   = os.environ.get("SCALE", "nano")
+SEEDS   = int(os.environ.get("SEEDS", "1"))     # runs per setting; >1 → report mean ± std
+BASE_LR = float(os.environ.get("LR", "3e-4"))
 
 # --- scale presets (both fit in 24 GB; micro is the meaningful one) ---
 if SCALE == "micro":
     ARCH = dict(n_layer=6, n_head=6, head_dim=64, n_embd=384, n_experts=16, top_k=2,
                 n_shared=1, d_rope=16, d_latent=64)
-    BLOCK, BATCH, ITERS, EVAL = 512, 24, 3000, 200
+    BLOCK, BATCH, ITERS, EVAL = 512, 24, 5000, 200
 else:
     ARCH = dict(n_layer=4, n_head=4, head_dim=16, n_embd=64, n_experts=8, top_k=2,
                 n_shared=1, d_rope=8, d_latent=32)
     BLOCK, BATCH, ITERS, EVAL = 128, 32, 600, 100
 
-print(f"[ablation] scale={SCALE}  device={device}  iters={ITERS}")
+print(f"[ablation] scale={SCALE}  device={device}  iters={ITERS}  seeds={SEEDS}")
 data = CharMultiDomain(load_domains(), BLOCK, device)
+
+
+def lr_at(it, warmup=max(20, ITERS // 50)):
+    """Linear warmup → cosine decay to 10% of BASE_LR (so longer micro runs settle well)."""
+    if it < warmup:
+        return BASE_LR * (it + 1) / warmup
+    r = (it - warmup) / max(1, ITERS - warmup)
+    return BASE_LR * 0.1 + 0.5 * BASE_LR * 0.9 * (1 + math.cos(math.pi * r))
 
 
 def make_cfg(**over):
@@ -121,13 +135,18 @@ def measure_mi(model, cfg):
     return (joint[mask] * (joint[mask] / (p_dom * p_exp)[mask]).log2()).sum().item()
 
 
-def train_eval(label, over, use_muon=False):
-    cfg = make_cfg(**over)
+def run_once(cfg, use_muon, seed):
+    """One full train + eval for a given seed. Returns (val CE, MI or None)."""
+    torch.manual_seed(seed)
     model = MoeMlaGPT(cfg).to(device)
-    opts = build_optimizers(model, lr=3e-4, use_muon=use_muon)
+    opts = build_optimizers(model, lr=BASE_LR, use_muon=use_muon)
     want_t2 = cfg.mtp
     model.train()
-    for _ in range(ITERS):
+    for it in range(ITERS):
+        lr = lr_at(it)                                   # warmup → cosine schedule
+        for o in opts:
+            for g in o.param_groups:
+                g["lr"] = lr
         if want_t2:
             x, y, t2, _ = data.get_batch("train", BATCH, domain=None, want_t2=True)
             _, loss = model(x, y, t2)
@@ -140,15 +159,35 @@ def train_eval(label, over, use_muon=False):
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         for o in opts:
             o.step()
-    ce, mi = val_ce(model), measure_mi(model, cfg)
-    print(f"  {label:24s}  val CE {ce:.3f}   MI {('%.3f' % mi) if mi is not None else '  — '}")
-    return ce, mi
+    return val_ce(model), measure_mi(model, cfg)
+
+
+def _fmt(xs):
+    if not xs:
+        return "   —   "
+    m = statistics.mean(xs)
+    if len(xs) == 1:
+        return f"{m:.3f}      "
+    return f"{m:.3f}±{statistics.pstdev(xs):.3f}"
+
+
+def train_eval(label, over, use_muon=False):
+    """Run SEEDS times and report mean ± std — the error bar is what tells signal from noise."""
+    cfg = make_cfg(**over)
+    ces, mis = [], []
+    for s in range(SEEDS):
+        ce, mi = run_once(cfg, use_muon, 1337 + s)
+        ces.append(ce)
+        if mi is not None:
+            mis.append(mi)
+    print(f"  {label:24s}  val CE {_fmt(ces)}   MI {_fmt(mis)}")
+    return statistics.mean(ces), (statistics.mean(mis) if mis else None)
 
 
 # ----------------------------- the ablation matrix -----------------------------
 if __name__ == "__main__":
-    print("\n=== stack ablation (one technique flipped at a time) ===")
-    print("  setting                   val CE     MI(domain;expert)")
+    print(f"\n=== stack ablation (one technique flipped at a time, {SEEDS} seed(s)) ===")
+    print("  setting                   val CE              MI(domain;expert)")
     base = train_eval("BASE (full stack)", {})
     train_eval("− MoE (dense FFN)",      dict(use_moe=False))
     train_eval("− MLA (GQA attn)",       dict(use_mla=False))
@@ -162,5 +201,8 @@ if __name__ == "__main__":
     train_eval("Muon optimizer (#14)",   {}, use_muon=True)
 
     assert base[0] < math.log(data.vocab_size), "BASE didn't learn — check the setup"
-    print("\nOK — stack matrix measured. Compare each row's val CE / MI against BASE.")
-    print("    (nano scale = noisy; download real domain files + SCALE=micro for meaningful numbers.)")
+    print("\nOK — stack matrix measured. Compare each row vs BASE, but ONLY trust gaps bigger than the ± std.")
+    if SEEDS == 1:
+        print("    (1 seed = no error bar → noisy. Re-run with SEEDS=3 SCALE=micro for a real measurement.)")
+    else:
+        print("    (overlapping error bars between two rows = the difference is within noise at this scale.)")
