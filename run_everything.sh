@@ -55,8 +55,14 @@ echo "### train + measure ###"
 
 # 5) the full stack-ablation matrix (each technique ON vs OFF) --------------
 #    SEEDS>1 reports mean ± std (the error bar that tells signal from noise). Default 1 for speed.
-echo "### stack ablation matrix (scale=$SCALE, seeds=${SEEDS:-1}) ###"
-SCALE="$SCALE" SEEDS="${SEEDS:-1}" "$PY" steps/12_stack_ablation.py
+#    TOKENIZER=bpe → build the bigger BALANCED corpus first, then measure on BPE tokens (real metrics).
+TOKENIZER="${TOKENIZER:-char}"
+if [ "$TOKENIZER" = "bpe" ]; then
+  echo "### building balanced multi-domain corpus (data_prep.py) ###"
+  MB_PER_DOMAIN="${MB_PER_DOMAIN:-8}" "$PY" data_prep.py
+fi
+echo "### stack ablation matrix (scale=$SCALE, tokenizer=$TOKENIZER, seeds=${SEEDS:-1}, iters=${ITERS:-default}) ###"
+SCALE="$SCALE" SEEDS="${SEEDS:-1}" TOKENIZER="$TOKENIZER" ${ITERS:+ITERS="$ITERS"} "$PY" steps/12_stack_ablation.py
 
 echo
 echo "### DONE — everything ran (scale=$SCALE). Result images + the printed matrix above. ###"

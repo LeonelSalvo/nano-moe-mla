@@ -1,3 +1,4 @@
 torch>=2.1
 numpy
 matplotlib
+tokenizers>=0.15

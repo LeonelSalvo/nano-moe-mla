@@ -61,8 +61,16 @@ else:
                 n_shared=1, d_rope=8, d_latent=32)
     BLOCK, BATCH, ITERS, EVAL = 128, 32, 600, 100
 
-print(f"[ablation] scale={SCALE}  device={device}  iters={ITERS}  seeds={SEEDS}")
-data = CharMultiDomain(load_domains(), BLOCK, device)
+# env overrides (for a ~1h preliminary run: e.g. SCALE=micro ITERS=1500)
+ITERS = int(os.environ.get("ITERS", ITERS))
+BATCH = int(os.environ.get("BATCH", BATCH))
+TOKENIZER = os.environ.get("TOKENIZER", "char")     # "char" (verified) | "bpe" (real metrics)
+
+print(f"[ablation] scale={SCALE}  tokenizer={TOKENIZER}  device={device}  iters={ITERS}  seeds={SEEDS}")
+if TOKENIZER == "bpe":
+    data = _load("bpe_data", "../bpe_data.py").BpeMultiDomain(BLOCK, device)
+else:
+    data = CharMultiDomain(load_domains(), BLOCK, device)
 
 
 def lr_at(it, warmup=max(20, ITERS // 50)):

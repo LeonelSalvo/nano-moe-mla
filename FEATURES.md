@@ -33,11 +33,16 @@ ablation can turn each on/off.
 of **val CE + MI** per setting (MoE, MLA, load-balancing, z-loss, QK-Norm, sandwich-norm, noisy
 top-k, top_k=1, MTP, AdamW-vs-Muon). `SCALE=nano` (fast smoke) or `SCALE=micro` (24 GB GPU).
 
-## 🔜 Queued
+## 🧰 Real-metrics data pipeline (BPE + balanced multi-domain)
 
-| # | feature | note |
-|---|---|---|
-| 16 | BPE + multi-domain corpus into the train | replace char-level with BPE (step 9) on a real FineWeb-Edu + code + Spanish mix — the upgrade for meaningful val loss / MI |
+For meaningful numbers (not char-level memorization), `data_prep.py` downloads a **bigger, balanced**
+3-domain corpus (English / real Python from CPython / Spanish, capped to equal size) and `bpe_data.py`
+tokenizes it with BPE. Run the ablation on it with `TOKENIZER=bpe`.
+
+> **Abstraction receipt:** the from-scratch BPE is `steps/09_bpe.py` (that's the mechanism). The data
+> pipeline uses Hugging Face `tokenizers` (the same byte-level BPE, in Rust) because the naive
+> O(merges×corpus) Python version would take hours on tens of MB. From-scratch to learn it; the fast
+> version to use it — exactly the "name what the wrapper wraps" rule.
 
 ## ❌ Dropped (with reason)
 
