@@ -23,6 +23,15 @@ sparse/frontier swaps. RMSNorm, RoPE, pre-norm + residual come from the dense ba
 10. **MTP** — multi-token prediction: a 2nd head predicts t+2; both losses drop.
 11. **Muon** — the orthogonalized-momentum optimizer (Newton-Schulz), from scratch.
 
+**Measure the whole stack**
+12. **Stack ablation** — train flipping ONE technique at a time; print a matrix of val CE + MI per
+    setting (MoE, MLA, load-balancing, z-loss, QK-Norm, sandwich-norm, noisy top-k, top_k=1, MTP,
+    AdamW-vs-Muon). `SCALE=nano` smoke test / `SCALE=micro` for a real 24 GB run.
+
+> Steps 3–7 also expose opt-in flags now wired into the model: router z-loss (`z_loss_gamma`),
+> noisy top-k (`noisy_topk`), MTP (`mtp`), and Muon in training (`USE_MUON=1 python steps/04_train.py`).
+> Defaults are unchanged, so the verified char-level ablation still reproduces.
+
 ```bash
 python steps/01_moe.py     # does it print OK? → on to step 2
 python steps/02_mla.py

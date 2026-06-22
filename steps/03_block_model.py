@@ -87,11 +87,13 @@ class Expert(nn.Module):
 
 
 class MoE(nn.Module):
-    def __init__(self, n_embd, n_experts, top_k, n_shared, load_balance=True, lb_gamma=1e-3, z_loss_gamma=0.0):
+    def __init__(self, n_embd, n_experts, top_k, n_shared, load_balance=True, lb_gamma=1e-3,
+                 z_loss_gamma=0.0, noisy_topk=False, noise_std=1.0):
         super().__init__()
         self.n_experts, self.top_k = n_experts, top_k
         self.load_balance, self.lb_gamma = load_balance, lb_gamma
         self.z_loss_gamma = z_loss_gamma                         # #3 router z-loss weight (0 = off)
+        self.noisy_topk, self.noise_std = noisy_topk, noise_std  # #4 exploration noise on routing
         self.aux_z = None                                        # last batch's z-loss term (read by the model)
         self.router  = nn.Linear(n_embd, n_experts, bias=False)
         self.experts = nn.ModuleList([Expert(n_embd) for _ in range(n_experts)])
@@ -112,6 +114,10 @@ class MoE(nn.Module):
         # WHICH experts win the top-k — never to the weight used to combine outputs. So it steers
         # routing toward under-used experts without adding any loss term or distorting the math.
         sel_score = affinity + self.expert_bias if self.load_balance else affinity
+        # #4 noisy top-k: jitter the SELECTION score while training so the router explores experts
+        # it would otherwise never try. Noise hits selection only, never the combine weights.
+        if self.noisy_topk and self.training:
+            sel_score = sel_score + torch.randn_like(sel_score) * (self.noise_std / self.n_experts)
         _, topk_i = sel_score.topk(self.top_k, dim=-1)          # selection (biased toward balance)
         topk_w = torch.gather(affinity, 1, topk_i)              # combine weights = CLEAN affinity of the chosen
         topk_w = topk_w / topk_w.sum(dim=-1, keepdim=True)
@@ -233,6 +239,10 @@ class MoeMlaConfig:
     load_balance: bool  = True     # #1: aux-loss-free load balancing (DeepSeek "bias trick")
     lb_gamma:     float = 1e-3      # how fast the load-balancing bias adapts to expert load
     z_loss_gamma: float = 0.0      # #3: router z-loss weight (0 = off). Keeps router logits small/stable at scale.
+    noisy_topk:   bool  = False    # #4: add Gaussian noise to the router selection scores while training (exploration)
+    noise_std:    float = 1.0      # std of that noise, scaled by 1/n_experts (only if noisy_topk)
+    mtp:          bool  = False    # #13: add a 2nd head predicting t+2 (Multi-Token Prediction)
+    mtp_weight:   float = 0.5      # weight of the t+2 loss (only if mtp)
 
 
 class SparseBlock(nn.Module):
@@ -250,7 +260,8 @@ class SparseBlock(nn.Module):
         # FFN: MoE (sparse experts) or a single dense SwiGLU (the dense baseline), per use_moe
         self.moe   = (MoE(cfg.n_embd, cfg.n_experts, cfg.top_k, cfg.n_shared,
                           load_balance=cfg.load_balance, lb_gamma=cfg.lb_gamma,
-                          z_loss_gamma=cfg.z_loss_gamma)
+                          z_loss_gamma=cfg.z_loss_gamma,
+                          noisy_topk=cfg.noisy_topk, noise_std=cfg.noise_std)
                       if cfg.use_moe else
                       Expert(cfg.n_embd))                          # Expert == a SwiGLU FFN
         # #9 sandwich norm: also RMSNorm each sub-layer's OUTPUT (before the residual add), not
@@ -283,6 +294,8 @@ class MoeMlaGPT(nn.Module):
         # WEIGHT TYING: the input table (text→vector) and the output matrix (vector→logits)
         # are the SAME tensor — one shared "dictionary" for reading and writing. Saves params.
         self.lm_head.weight = self.tok_emb.weight
+        # #13 MTP: an optional SECOND head that predicts t+2 (NOT tied). Only built if cfg.mtp.
+        self.head2 = nn.Linear(cfg.n_embd, cfg.vocab_size, bias=False) if cfg.mtp else None
         # the RoPE "rotation table" (cos/sin for the rope-part dimension). It's fixed trig,
         # NOT learned → register_buffer (travels with the model but isn't a parameter).
         # MLA rotates only the small rope-part (d_rope); GQA rotates the full head_dim
@@ -311,7 +324,7 @@ class MoeMlaGPT(nn.Module):
         idle = (cfg.n_experts - cfg.top_k) * per_expert * cfg.n_layer   # skipped experts × layers
         return total - idle
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, targets2=None):
         B, T = idx.shape
         x = self.tok_emb(idx)                                    # (B, T, n_embd) — tokens, NO position yet
         # hand the rotation table (sliced to this sequence length) down to every block;
@@ -330,6 +343,11 @@ class MoeMlaGPT(nn.Module):
                 aux_z = sum(b.moe.aux_z for b in self.blocks if b.moe.aux_z is not None)
                 if not isinstance(aux_z, float):                 # at least one block contributed
                     loss = loss + self.cfg.z_loss_gamma * aux_z
+            # #13 MTP: add the t+2 head's loss (only if the head exists and t+2 targets are given).
+            if self.head2 is not None and targets2 is not None:
+                l2 = self.head2(x)
+                loss = loss + self.cfg.mtp_weight * F.cross_entropy(
+                    l2.reshape(B * T, -1), targets2.reshape(B * T))
         return logits, loss
 
     @torch.no_grad()

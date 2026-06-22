@@ -13,6 +13,8 @@ ablation can turn each on/off.
 | 9 | Sandwich / post-norm (Gemma 2 / OLMo 2) | `post_norm` | also normalize each sub-layer's output, not just its input |
 | 7 | Top-1 routing (Switch-style) | `top_k=1` | already a config knob; with top-1, load balancing matters more |
 | 3 | Router z-loss (ST-MoE) | `z_loss_gamma` | penalizes large router logits → numerical stability at scale. Opt-in (0 = off) |
+| 4 | Noisy top-k routing | `noisy_topk` / `noise_std` | jitter the selection score while training so the router explores. Opt-in |
+| 13 | Multi-Token Prediction (MTP) | `mtp` / `mtp_weight` | a 2nd head predicts t+2 (denser training signal). Opt-in; built into the model |
 
 ## ✅ Demonstrated as standalone steps (from scratch, each with a self-checking test)
 
@@ -25,13 +27,17 @@ ablation can turn each on/off.
 
 <sub>KV-cache, BPE and MTP are demonstrated in isolation to keep the main ablation model (steps 03–07) stable and char-level for a clean comparison. Wiring BPE + MTP into the trained model is the next extension (see the wiki escalado note).</sub>
 
+## 🧪 Stack ablation
+
+`steps/12_stack_ablation.py` trains the model flipping ONE technique at a time and prints a matrix
+of **val CE + MI** per setting (MoE, MLA, load-balancing, z-loss, QK-Norm, sandwich-norm, noisy
+top-k, top_k=1, MTP, AdamW-vs-Muon). `SCALE=nano` (fast smoke) or `SCALE=micro` (24 GB GPU).
+
 ## 🔜 Queued
 
 | # | feature | note |
 |---|---|---|
-| 4 | Noisy top-k routing | Gaussian noise on router scores while training (exploration) |
-| 13 | MTP into the trained model | the t+2 head exists standalone (step 10); wiring it into 04_train is pending |
-| 16 | BPE + multi-domain corpus into the train | replace char-level with BPE (step 9) on a real FineWeb-Edu + code + Spanish mix |
+| 16 | BPE + multi-domain corpus into the train | replace char-level with BPE (step 9) on a real FineWeb-Edu + code + Spanish mix — the upgrade for meaningful val loss / MI |
 
 ## ❌ Dropped (with reason)
 
