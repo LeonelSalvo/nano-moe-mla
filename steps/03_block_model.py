@@ -87,10 +87,12 @@ class Expert(nn.Module):
 
 
 class MoE(nn.Module):
-    def __init__(self, n_embd, n_experts, top_k, n_shared, load_balance=True, lb_gamma=1e-3):
+    def __init__(self, n_embd, n_experts, top_k, n_shared, load_balance=True, lb_gamma=1e-3, z_loss_gamma=0.0):
         super().__init__()
         self.n_experts, self.top_k = n_experts, top_k
         self.load_balance, self.lb_gamma = load_balance, lb_gamma
+        self.z_loss_gamma = z_loss_gamma                         # #3 router z-loss weight (0 = off)
+        self.aux_z = None                                        # last batch's z-loss term (read by the model)
         self.router  = nn.Linear(n_embd, n_experts, bias=False)
         self.experts = nn.ModuleList([Expert(n_embd) for _ in range(n_experts)])
         self.shared  = nn.ModuleList([Expert(n_embd) for _ in range(n_shared)])
@@ -100,7 +102,11 @@ class MoE(nn.Module):
     def forward(self, x):
         B, T, C = x.shape
         xf = x.reshape(-1, C)
-        affinity = F.softmax(self.router(xf), dim=-1)            # (N, n_experts): the routing weights
+        logits   = self.router(xf)                               # (N, n_experts): pre-softmax router scores
+        affinity = F.softmax(logits, dim=-1)                     # (N, n_experts): the routing weights
+        # #3 router z-loss (ST-MoE): penalize large router logits → numerical stability at scale.
+        # Off by default (gamma 0). Stored as a tensor WITH grad; the model adds gamma * aux_z to the loss.
+        self.aux_z = (torch.logsumexp(logits, dim=-1) ** 2).mean() if self.z_loss_gamma > 0 else None
 
         # #1 LOAD BALANCING (aux-loss-free, DeepSeek). The per-expert bias is added ONLY to decide
         # WHICH experts win the top-k — never to the weight used to combine outputs. So it steers
@@ -226,6 +232,7 @@ class MoeMlaConfig:
     post_norm:    bool  = True     # #9: sandwich norm — also normalize each sub-layer's OUTPUT
     load_balance: bool  = True     # #1: aux-loss-free load balancing (DeepSeek "bias trick")
     lb_gamma:     float = 1e-3      # how fast the load-balancing bias adapts to expert load
+    z_loss_gamma: float = 0.0      # #3: router z-loss weight (0 = off). Keeps router logits small/stable at scale.
 
 
 class SparseBlock(nn.Module):
@@ -242,7 +249,8 @@ class SparseBlock(nn.Module):
         self.norm2 = RMSNorm(cfg.n_embd)                          # norm BEFORE the FFN
         # FFN: MoE (sparse experts) or a single dense SwiGLU (the dense baseline), per use_moe
         self.moe   = (MoE(cfg.n_embd, cfg.n_experts, cfg.top_k, cfg.n_shared,
-                          load_balance=cfg.load_balance, lb_gamma=cfg.lb_gamma)
+                          load_balance=cfg.load_balance, lb_gamma=cfg.lb_gamma,
+                          z_loss_gamma=cfg.z_loss_gamma)
                       if cfg.use_moe else
                       Expert(cfg.n_embd))                          # Expert == a SwiGLU FFN
         # #9 sandwich norm: also RMSNorm each sub-layer's OUTPUT (before the residual add), not
@@ -317,6 +325,11 @@ class MoeMlaGPT(nn.Module):
         if targets is not None:
             # cross-entropy: how far the predicted distribution is from the true next token
             loss = F.cross_entropy(logits.reshape(B * T, -1), targets.reshape(B * T))
+            # #3 add the router z-loss from every MoE block (only if enabled; gamma 0 → no-op).
+            if self.cfg.use_moe and self.cfg.z_loss_gamma > 0:
+                aux_z = sum(b.moe.aux_z for b in self.blocks if b.moe.aux_z is not None)
+                if not isinstance(aux_z, float):                 # at least one block contributed
+                    loss = loss + self.cfg.z_loss_gamma * aux_z
         return logits, loss
 
     @torch.no_grad()

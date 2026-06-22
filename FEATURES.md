@@ -12,6 +12,7 @@ ablation can turn each on/off.
 | 5 | QK-Norm | `qk_norm` | RMSNorm on per-head content q/k before the dot product (stability) |
 | 9 | Sandwich / post-norm (Gemma 2 / OLMo 2) | `post_norm` | also normalize each sub-layer's output, not just its input |
 | 7 | Top-1 routing (Switch-style) | `top_k=1` | already a config knob; with top-1, load balancing matters more |
+| 3 | Router z-loss (ST-MoE) | `z_loss_gamma` | penalizes large router logits → numerical stability at scale. Opt-in (0 = off) |
 
 ## ✅ Demonstrated as standalone steps (from scratch, each with a self-checking test)
 
@@ -20,16 +21,17 @@ ablation can turn each on/off.
 | 11 | Real KV-cache at inference for MLA | `steps/08_kv_cache.py` | incremental cache matches the parallel forward → O(T) generation |
 | 16 | BPE tokenizer | `steps/09_bpe.py` | learn merges, exact round-trip, shorter sequences than char-level |
 | 13 | Multi-Token Prediction (MTP) | `steps/10_mtp.py` | a 2nd head predicts t+2; both losses drop together |
-| 14 | Muon optimizer | `steps/11_muon.py` | orthogonalized-momentum (Newton-Schulz) drives loss down, no AdamW |
+| 14 | Muon optimizer | `steps/11_muon.py` | orthogonalized-momentum (Newton-Schulz) drives loss down, no AdamW. **Also wireable into training:** `USE_MUON=1 python steps/04_train.py` (Muon for hidden matrices + AdamW for embeddings/head/norms) |
 
-<sub>These are demonstrated in isolation to keep the main ablation model (steps 03–07) stable and char-level for a clean comparison. Wiring them into the trained model is the natural next extension.</sub>
+<sub>KV-cache, BPE and MTP are demonstrated in isolation to keep the main ablation model (steps 03–07) stable and char-level for a clean comparison. Wiring BPE + MTP into the trained model is the next extension (see the wiki escalado note).</sub>
 
 ## 🔜 Queued
 
 | # | feature | note |
 |---|---|---|
-| 3 | Router z-loss | regularize router logits; needs aux-loss plumbing into the train loop |
 | 4 | Noisy top-k routing | Gaussian noise on router scores while training (exploration) |
+| 13 | MTP into the trained model | the t+2 head exists standalone (step 10); wiring it into 04_train is pending |
+| 16 | BPE + multi-domain corpus into the train | replace char-level with BPE (step 9) on a real FineWeb-Edu + code + Spanish mix |
 
 ## ❌ Dropped (with reason)
 
