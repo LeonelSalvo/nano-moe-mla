@@ -1,4 +1,4 @@
-# Building nanoMoLa step by step
+# Building nano-moe-mla step by step
 
 Same idea as modern-nanoGPT: one component at a time, each a self-checking script
 (zoom out → zoom in → implementation → test). Here the two new pieces are the

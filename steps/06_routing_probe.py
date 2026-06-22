@@ -3,7 +3,7 @@ STEP 6 — Routing probe: do the experts specialize by domain? (+ the balancing 
 =======================================================================================
 
 The measurement of "expertise". Plan:
-  1) train nanoMoLa on the MIXED multi-domain corpus (step 5),
+  1) train nano-moe-mla on the MIXED multi-domain corpus (step 5),
   2) feed it VAL text from ONE domain at a time and record, per token, which expert the
      router picks (top-1), across all MoE layers,
   3) build a domain × expert matrix → heatmap, and one number: the MUTUAL INFORMATION
@@ -43,7 +43,7 @@ def _load(name, filename):
 
 m3 = _load("mola_model", "03_block_model.py")
 m5 = _load("mola_data",  "05_multidomain.py")
-MoLaGPT, MoLaConfig = m3.MoLaGPT, m3.MoLaConfig
+MoeMlaGPT, MoeMlaConfig = m3.MoeMlaGPT, m3.MoeMlaConfig
 CharMultiDomain, load_domains = m5.CharMultiDomain, m5.load_domains
 
 device      = "cuda" if torch.cuda.is_available() else "cpu"
@@ -57,11 +57,11 @@ data = CharMultiDomain(load_domains(), block_size, device)
 
 def train_and_probe(load_balance):
     """Train a fresh model (balancing on/off), then measure domain→expert routing."""
-    cfg = MoLaConfig(vocab_size=data.vocab_size, block_size=block_size, n_layer=4,
+    cfg = MoeMlaConfig(vocab_size=data.vocab_size, block_size=block_size, n_layer=4,
                      n_head=4, head_dim=16, n_embd=64,
                      n_experts=8, top_k=2, n_shared=1, d_rope=8, d_latent=32,
                      load_balance=load_balance)              # ← the toggle we're studying
-    model = MoLaGPT(cfg).to(device)
+    model = MoeMlaGPT(cfg).to(device)
     opt   = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), weight_decay=0.1)
 
     # 1) train on the MIXED corpus

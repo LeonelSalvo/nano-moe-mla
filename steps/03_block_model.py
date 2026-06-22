@@ -12,7 +12,7 @@ THE BLOCK (pre-norm + residual):
   • "residual" (the x + ...): ADD the sub-layer's output to its input, don't replace it.
     That gives the gradient a clean path backward → you can stack many blocks.
 
-THE MODEL (MoLaGPT), end to end:
+THE MODEL (MoeMlaGPT), end to end:
     token ids
       → tok_emb        each id → a vector of n_embd numbers      (NO position added here!)
       → N × SparseBlock   each = MLA (attention) + MoE (FFN)
@@ -204,7 +204,7 @@ class GQA(nn.Module):
 
 # ===================== what's NEW today: Block and Model =====================
 @dataclass
-class MoLaConfig:
+class MoeMlaConfig:
     vocab_size: int = 65
     block_size: int = 128
     n_layer:    int = 4
@@ -260,7 +260,7 @@ class SparseBlock(nn.Module):
         return x
 
 
-class MoLaGPT(nn.Module):
+class MoeMlaGPT(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
@@ -336,10 +336,10 @@ class MoLaGPT(nn.Module):
 # ----------------------------- TEST (self-checking) -----------------------------
 if __name__ == "__main__":
     torch.manual_seed(0)
-    cfg = MoLaConfig(vocab_size=65, block_size=32, n_layer=4)
-    model = MoLaGPT(cfg)
+    cfg = MoeMlaConfig(vocab_size=65, block_size=32, n_layer=4)
+    model = MoeMlaGPT(cfg)
 
-    print("=== Step 3: sparse Block + MoLaGPT ===")
+    print("=== Step 3: sparse Block + MoeMlaGPT ===")
     print(f"flags: qk_norm={cfg.qk_norm}  post_norm={cfg.post_norm}  load_balance={cfg.load_balance}  (toggleable for the ablation)")
     print(f"total params: {model.num_params()/1e3:.1f}K   "
           f"active/token: {model.active_params_per_token()/1e3:.1f}K   "

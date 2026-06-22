@@ -2,7 +2,7 @@
 STEP 9 — BPE tokenizer from scratch  (feature #16)
 ==================================================
 
-Char-level (what nanoMoLa uses) has a tiny vocab but LONG sequences (one token per byte).
+Char-level (what nano-moe-mla uses) has a tiny vocab but LONG sequences (one token per byte).
 Byte-Pair Encoding (BPE) — what real LLMs use — starts from the 256 bytes and repeatedly
 MERGES the most frequent adjacent pair into a new token. A bigger vocab packs common
 chunks ("the", "    ", "def ") into single tokens → far fewer tokens per text → cheaper to

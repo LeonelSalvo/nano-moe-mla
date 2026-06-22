@@ -61,7 +61,7 @@ class MLA(nn.Module):
         self.w_kr  = nn.Linear(n_embd, self.dr, bias=False)
         self.w_o   = nn.Linear(n_head * self.hd, n_embd, bias=False)
 
-    def forward(self, x, cos, sin):                          # x: (B, T, C)
+    def forward(self, x, cos, sin, return_scores=False):     # x: (B, T, C)
         B, T, C = x.shape
         nh, hd, dr, dc = self.nh, self.hd, self.dr, self.dc
 
@@ -85,10 +85,14 @@ class MLA(nn.Module):
 
         # causal mask + softmax + weighted sum of V
         future = torch.triu(torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1)
-        scores = scores.masked_fill(future, float("-inf"))
-        out = torch.softmax(scores, dim=-1) @ v                  # (B, nh, T, hd)
+        masked = scores.masked_fill(future, float("-inf"))
+        attn   = torch.softmax(masked, dim=-1)
+        out = attn @ v                                           # (B, nh, T, hd)
         out = out.transpose(1, 2).reshape(B, T, nh * hd)
-        return self.w_o(out)
+        out = self.w_o(out)
+        if return_scores:
+            return out, scores, attn                             # scores = pre-mask, pre-softmax
+        return out
 
 
 # ----------------------------- TEST (self-checking) -----------------------------
@@ -122,4 +126,23 @@ if __name__ == "__main__":
     print(f"KV cached / token  →  MLA: {mla_cache}   GQA(2): {gqa_cache}   MHA: {mha_cache}")
     assert mla_cache < mha_cache, "MLA should cache less than MHA"
 
-    print("\nOK — MLA works: latent-compressed KV + decoupled RoPE, causal, smaller cache. On to step 3 (block + model).")
+    # (d) CORRECTNESS — attention is a valid probability distribution (rows ≥ 0 and sum to 1)
+    _, _, attn = mla(x, cos, sin, return_scores=True)
+    rows = attn.sum(dim=-1)
+    print("attention rows sum to 1?:", torch.allclose(rows, torch.ones_like(rows), atol=1e-5),
+          " | all weights ≥ 0?:", bool((attn >= 0).all()))
+    assert (attn >= 0).all() and torch.allclose(rows, torch.ones_like(rows), atol=1e-5), \
+        "attention is not a valid distribution"
+
+    # (e) CORRECTNESS — decoupled RoPE encodes RELATIVE position: shifting ALL positions by k
+    #     leaves the (pre-mask) score matrix unchanged, i.e. score(i,j) depends only on i−j.
+    shift = 3
+    cos_l, sin_l = build_rope_cache(d_rope, T + shift)
+    _, s_base,  _ = mla(x, cos_l[:T],            sin_l[:T],            return_scores=True)
+    _, s_shift, _ = mla(x, cos_l[shift:shift+T], sin_l[shift:shift+T], return_scores=True)
+    rel_ok = torch.allclose(s_base, s_shift, atol=1e-5)
+    print("scores invariant to a global position shift (relative RoPE)?:", rel_ok)
+    assert rel_ok, "RoPE is not encoding RELATIVE position — score(i,j) changed under a global shift"
+
+    print("\nOK — MLA works AND is correct: latent-compressed KV + decoupled RoPE, causal, smaller cache,\n"
+          "valid attention distribution, and relative-position scores. On to step 3 (block + model).")

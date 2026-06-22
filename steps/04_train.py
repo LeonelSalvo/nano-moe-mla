@@ -37,7 +37,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("mola_model", os.path.join(HERE, "03_block_model.py"))
 mola  = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mola)
-MoLaGPT, MoLaConfig = mola.MoLaGPT, mola.MoLaConfig
+MoeMlaGPT, MoeMlaConfig = mola.MoeMlaGPT, mola.MoeMlaConfig
 
 
 # ----------------------------- data: text → tokens -----------------------------
@@ -100,10 +100,10 @@ print(f"[train] device = {device}")
 
 # --- data + model ---
 data = CharData(load_text(), block_size, device)
-cfg  = MoLaConfig(vocab_size=data.vocab_size, block_size=block_size, n_layer=4,
+cfg  = MoeMlaConfig(vocab_size=data.vocab_size, block_size=block_size, n_layer=4,
                   n_head=4, head_dim=16, n_embd=64,
                   n_experts=8, top_k=2, n_shared=1, d_rope=8, d_latent=32)
-model = MoLaGPT(cfg).to(device)
+model = MoeMlaGPT(cfg).to(device)
 print(f"[train] vocab={cfg.vocab_size}  "
       f"total={model.num_params()/1e3:.1f}K  active/token={model.active_params_per_token()/1e3:.1f}K")
 
@@ -155,7 +155,7 @@ for it in range(max_iters + 1):
         log.write(f"{it},{l['train']:.4f},{l['val']:.4f},{get_lr(it):.6f}\n"); log.flush()
         if l["val"] < best_val:
             best_val = l["val"]
-            # save cfg as a plain dict (asdict) — pickling the MoLaConfig CLASS fails because
+            # save cfg as a plain dict (asdict) — pickling the MoeMlaConfig CLASS fails because
             # it lives in a module we loaded by path, not a normally-importable one.
             torch.save({"model": model.state_dict(), "cfg": asdict(cfg),
                         "stoi": data.stoi, "itos": data.itos},
@@ -192,4 +192,4 @@ tokens = model.generate(start, max_new_tokens=400, temperature=0.8, top_k=40)[0]
 print("\n--- sample ---\n" + data.decode(tokens))
 
 assert best_val < math.log(cfg.vocab_size) - 0.3, "the loss barely moved — check for a bug"
-print("\nOK — nanoMoLa trains: the loss dropped, and it's sparse (MoE) with a small KV cache (MLA).")
+print("\nOK — nano-moe-mla trains: the loss dropped, and it's sparse (MoE) with a small KV cache (MLA).")

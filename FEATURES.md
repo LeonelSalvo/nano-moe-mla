@@ -1,10 +1,10 @@
-# nanoMoLa — feature registry
+# nano-moe-mla — feature registry
 
 Record of which 2026-frontier features are in the model, queued, or deliberately left out.
-Applied features are **toggleable flags** on `MoLaConfig` (steps/03_block_model.py) so the
+Applied features are **toggleable flags** on `MoeMlaConfig` (steps/03_block_model.py) so the
 ablation can turn each on/off.
 
-## ✅ Applied (flags in MoLaConfig)
+## ✅ Applied (flags in MoeMlaConfig)
 
 | # | feature | flag | what it does |
 |---|---|---|---|

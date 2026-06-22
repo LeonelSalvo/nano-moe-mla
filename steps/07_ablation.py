@@ -11,7 +11,7 @@ the exact same data, for the same steps, changing only two toggles:
     dense     GQA         SwiGLU     the baseline (modern-nanoGPT style)
     +MoE      GQA         MoE        what MoE adds on its own
     +MLA      MLA         SwiGLU     what MLA adds on its own
-    both      MLA         MoE        nanoMoLa (the full sparse model)
+    both      MLA         MoE        nano-moe-mla (the full sparse model)
 
 For each we report VAL LOSS (quality) plus the structural wins: total vs active params
 (MoE's sparsity) and KV-cache floats/token (MLA's smaller cache).
@@ -42,7 +42,7 @@ def _load(name, filename):
 
 m3 = _load("mola_model", "03_block_model.py")
 m5 = _load("mola_data",  "05_multidomain.py")
-MoLaGPT, MoLaConfig = m3.MoLaGPT, m3.MoLaConfig
+MoeMlaGPT, MoeMlaConfig = m3.MoeMlaGPT, m3.MoeMlaConfig
 CharMultiDomain, load_domains = m5.CharMultiDomain, m5.load_domains
 
 device      = "cuda" if torch.cuda.is_available() else "cpu"
@@ -68,11 +68,11 @@ def eval_val(model):
 
 def run(use_moe, use_mla):
     """Train one variant and return (val_loss, total_params, active_params, kv_per_token)."""
-    cfg = MoLaConfig(vocab_size=data.vocab_size, block_size=block_size, n_layer=4,
+    cfg = MoeMlaConfig(vocab_size=data.vocab_size, block_size=block_size, n_layer=4,
                      n_head=4, head_dim=16, n_embd=64,
                      n_experts=8, top_k=2, n_shared=1, n_kv_head=2, d_rope=8, d_latent=32,
                      use_moe=use_moe, use_mla=use_mla)         # ← the two toggles being ablated
-    model = MoLaGPT(cfg).to(device)
+    model = MoeMlaGPT(cfg).to(device)
     opt   = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), weight_decay=0.1)
     model.train()
     for _ in range(train_iters):
@@ -106,7 +106,7 @@ for name, val, total, active, kv in rows:
 names = [r[0] for r in rows]; vals = [r[1] for r in rows]
 plt.figure(figsize=(6, 3.6))
 bars = plt.bar(names, vals, color=["#888", "#1f6feb", "#1d9e75", "#8957e5"])
-plt.ylabel("val loss (cross-entropy)"); plt.title("nanoMoLa ablation — dense vs +MoE vs +MLA vs both")
+plt.ylabel("val loss (cross-entropy)"); plt.title("nano-moe-mla ablation — dense vs +MoE vs +MLA vs both")
 plt.ylim(min(vals) - 0.05, max(vals) + 0.05)
 for b, v in zip(bars, vals):
     plt.text(b.get_x() + b.get_width() / 2, v, f"{v:.3f}", ha="center", va="bottom", fontsize=9)

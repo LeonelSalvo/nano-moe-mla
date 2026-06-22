@@ -1,10 +1,8 @@
 <div align="center">
 
-# nanoMoLa
+# nano-moe-mla
 
-**The sparse, frontier sequel to [modern-nanoGPT](https://github.com/LeonelSalvo/modern-nanoGPT): a GPT built from scratch with the two pieces that define a 2026 frontier open model — `MoE` + `MLA` — plus the tools to actually *measure* what they do.**
-
-`Mo`E + M`La` → **MoLa**
+**A from-scratch PyTorch implementation of the two components that define current sparse open LLMs — Mixture-of-Experts (`MoE`) and Multi-head Latent Attention (`MLA`) — in a single trainable nano-scale model, with tooling to measure what each one does.**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.1+-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
@@ -14,26 +12,28 @@
 
 ---
 
-## Why this exists
+## Overview
 
-[`modern-nanoGPT`](https://github.com/LeonelSalvo/modern-nanoGPT) is a **dense** Llama-style transformer — the shared backbone of every open LLM. The 2026 frontier (DeepSeek-V3, Kimi K2, GLM, Qwen3-MoE) is **sparse**, and converges on one template:
+[`modern-nanoGPT`](https://github.com/LeonelSalvo/modern-nanoGPT) is a **dense** Llama-style transformer — the backbone shared by most open LLMs. Current sparse open models (DeepSeek-V3, Kimi K2, GLM, Qwen3-MoE) converge on one template:
 
 > **MoE** (sparse experts instead of one dense FFN) **+ MLA** (latent-compressed attention instead of plain MHA/GQA).
 
-`nanoMoLa` implements those two from scratch, **and** ships the measurement tools that make the result interesting: a labeled multi-domain corpus, a router-specialization probe, and a feature ablation.
+This repo implements both from scratch in the same trainable model, and includes the measurement tooling that makes the result legible: a labeled multi-domain corpus, a router-specialization probe, and a 2×2 feature ablation.
 
-## Dense → frontier: the two swaps
+**How this differs from related from-scratch work.** [rasbt/LLMs-from-scratch](https://github.com/rasbt/LLMs-from-scratch) isolates MLA; [cameronrwolfe/nanoMoE](https://github.com/cameronrwolfe/nanoMoE) isolates MoE (with classic auxiliary-loss balancing). Here MoE and MLA live in **one model**, with a factorial dense / +MoE / +MLA / both ablation that separates their effects, plus a router-specialization probe over a labeled corpus.
 
-| dense (modern-nanoGPT) | frontier (this repo) | what changes |
+## Dense → sparse: the two swaps
+
+| dense (modern-nanoGPT) | sparse (this repo) | what changes |
 |---|---|---|
 | one SwiGLU FFN per block | **MoE** — N expert FFNs + a top-k router (+ a shared expert) | huge total params, few **active** per token |
 | GQA attention | **MLA** (Multi-head Latent Attention) | KV cache compressed to a latent vector, with decoupled RoPE |
 
 Everything else (RMSNorm, RoPE, pre-norm + residual, tied/no-bias) is reused from the dense baseline.
 
-## Frontier add-ons (toggleable flags)
+## Optional features (toggleable flags)
 
-On top of MoE + MLA, a few small 2026 features, each a flag on `MoLaConfig` so the ablation can turn them on/off — full record (applied / queued / dropped + why) in [`FEATURES.md`](FEATURES.md):
+On top of MoE + MLA, a few small recent features, each a flag on `MoeMlaConfig` so the ablation can turn them on/off — full record (applied / queued / dropped + why) in [`FEATURES.md`](FEATURES.md):
 
 - **#1 aux-loss-free load balancing** (DeepSeek bias trick) — keeps experts evenly used without an extra loss.
 - **#5 QK-Norm** — RMSNorm on q/k before attention (stability; replaced Gemma's logit soft-capping).
@@ -75,7 +75,7 @@ Trained from scratch on a single RTX 3090.
 
 ### Finding 1 — the balancing ↔ specialization tradeoff
 
-On a labeled 3-domain corpus (English drama · Python code · Spanish prose), I measured how strongly the router sends each domain to different experts, via the mutual information `I(domain ; expert)`:
+On a labeled 3-domain corpus (English drama · Python code · Spanish prose), the probe measures how strongly the router sends each domain to different experts, via the mutual information `I(domain ; expert)`:
 
 | load balancing | I(domain ; expert) |
 |---|---|
@@ -101,13 +101,15 @@ The two pieces do **different jobs**, and the ablation isolates each cleanly:
 
 - **MoE is the quality lever** — biggest val-loss drop (1.674 → 1.496) by adding capacity (huge total params, only ~36% active per token).
 - **MLA is the memory lever** — on its own it's ~neutral on loss (1.674 → 1.691) but shrinks the KV cache to **40 vs 64 floats/token (−37%)**. Its win is the cache, not the loss.
-- **both** = nanoMoLa: keeps most of MoE's quality gain *and* MLA's smaller cache, with a small quality give-back from compressing attention — the expected tradeoff.
+- **both** = the full model: keeps most of MoE's quality gain *and* MLA's smaller cache, with a small quality give-back from compressing attention — the expected tradeoff.
 
 <sub>At nano scale these gaps are modest, but the directions are clean and the structural numbers (active params, KV cache) hold at any scale.</sub>
 
-## What this is for
+> On method: the mutual-information probe is one clean informational angle on specialization. The MoE literature more commonly measures it by routing distribution per category, load, ablation, or predictive probing — MI here is a complement, not the field-standard method.
 
-nanoMoLa is a **learning + portfolio artifact**, not a model to deploy. Its purpose is twofold: implement the 2026 frontier sparse template (MoE + MLA) **from scratch**, and — the part that makes it more than a re-implementation — build the **instruments to study it**: a labeled multi-domain corpus, a router-specialization probe, and a feature ablation. At nano scale the val loss isn't the point; the value is (a) understanding each piece down to the tensor, and (b) being able to **measure** what each piece actually buys (see the two findings above).
+## Scope
+
+This is an educational and reference implementation, not a model intended for deployment. It has two goals: implement the sparse template (MoE + MLA) from scratch, down to the tensor, and provide the instruments to study it — a labeled multi-domain corpus, a router-specialization probe, and a feature ablation. At nano scale the validation loss is not the objective; the value is understanding each component in full and being able to measure what each one contributes (see the two findings above).
 
 ## How to scale beyond nano
 
@@ -117,7 +119,7 @@ Three directions, roughly by effort:
 
 **Push the architecture toward the real frontier.** DeepSeek Sparse Attention (DSA) or a linear-attention / gated-DeltaNet hybrid (Qwen3-Next) for cheap long context; a Mamba/SSM block for a transformer-vs-SSM head-to-head; fine-grained experts, expert-parallel routing, capacity factors.
 
-**Keep finding things (what this repo is built for).** Re-run the routing probe at larger scale or with `top_k=1` and see if specialization (MI) rises. Ablate the *stabilizers* (`qk_norm`, `post_norm`, `load_balance`) on val loss, not just the big pieces. Measure the KV-cache memory and tokens/sec gap (MLA vs GQA vs MHA) **as context grows** — that's where MLA actually pays off. And an SFT step (→ DPO/GRPO) turns the base model into a chat-y one (the nanochat direction).
+**Keep measuring.** Re-run the routing probe at larger scale or with `top_k=1` and see if specialization (MI) rises. Ablate the *stabilizers* (`qk_norm`, `post_norm`, `load_balance`) on val loss, not just the big pieces. Measure the KV-cache memory and tokens/sec gap (MLA vs GQA vs MHA) **as context grows** — that's where MLA actually pays off. And an SFT step (→ DPO/GRPO) turns the base model into a chat-y one (the nanochat direction).
 
 ## Credits
 
