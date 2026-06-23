@@ -11,3 +11,6 @@ samples.txt
 
 # personal scratch notes (kept local)
 notes.md
+
+# run outputs (persisted on disk, not committed; curate showcase plots to root)
+results/
