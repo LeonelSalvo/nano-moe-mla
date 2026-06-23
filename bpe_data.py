@@ -3,7 +3,7 @@ bpe_data.py — a BPE-tokenized multi-domain dataset (the real-metrics upgrade t
 
 Step 5 (CharMultiDomain) is char-level: tiny vocab, long sequences, fine for the mechanism demo.
 For meaningful numbers we tokenize with BPE. The from-scratch BPE (the "how it works" receipt) lives
-in the companion repo `llm-techniques-from-scratch` (bpe.py); here we use Hugging Face `tokenizers`
+in the companion repo `frontier-llm-techniques-2026-Q1` (bpe.py); here we use Hugging Face `tokenizers`
 (the same byte-level BPE, in Rust) because tokenizing tens of MB with a naive Python BPE would take hours.
 
 Drop-in for CharMultiDomain: same interface (.names, .vocab_size, .get_batch, .decode), so the

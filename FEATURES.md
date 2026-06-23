@@ -23,7 +23,7 @@ ablation can turn each on/off.
 
 <sub>Three cross-cutting techniques that aren't specific to this architecture — the **Muon optimizer**,
 **Multi-Token Prediction**, and the **from-scratch BPE tokenizer** — were factored out into the companion
-repo [`llm-techniques-from-scratch`](https://github.com/LeonelSalvo/llm-techniques-from-scratch).</sub>
+repo [`frontier-llm-techniques-2026-Q1`](https://github.com/LeonelSalvo/frontier-llm-techniques-2026-Q1).</sub>
 
 ## 🧪 Stack ablation
 
@@ -38,7 +38,7 @@ For meaningful numbers (not char-level memorization), `data_prep.py` downloads a
 3-domain corpus (English / real Python from CPython / Spanish, capped to equal size) and `bpe_data.py`
 tokenizes it with BPE. Run the ablation on it with `TOKENIZER=bpe`.
 
-> **Abstraction receipt:** the from-scratch BPE lives in the companion repo `llm-techniques-from-scratch`
+> **Abstraction receipt:** the from-scratch BPE lives in the companion repo `frontier-llm-techniques-2026-Q1`
 > (`bpe.py`) — that's the mechanism. The data pipeline here uses Hugging Face `tokenizers` (the same
 > byte-level BPE, in Rust) because the naive O(merges×corpus) Python version would take hours on tens of
 > MB. From-scratch to learn it; the fast version to use it — exactly the "name what the wrapper wraps" rule.

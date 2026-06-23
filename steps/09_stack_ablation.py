@@ -9,7 +9,7 @@ Architecture / routing techniques covered: MoE, MLA, load-balancing (#1), router
 QK-Norm (#5), sandwich-norm (#9), noisy top-k (#4), and top_k=1 vs 2.
 
 (Cross-cutting techniques that are NOT specific to this architecture — the Muon optimizer, MTP,
-and the from-scratch BPE — live in the companion repo `llm-techniques-from-scratch`.)
+and the from-scratch BPE — live in the companion repo `frontier-llm-techniques-2026-Q1`.)
 
 Val loss reported is ALWAYS the plain next-token cross-entropy (the z-loss aux term is a training
 signal, not a comparable loss), so every row is apples-to-apples.

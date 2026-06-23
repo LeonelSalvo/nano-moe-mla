@@ -58,7 +58,7 @@ steps/
 
 > Three cross-cutting techniques (the **Muon** optimizer, **Multi-Token Prediction**, and a
 > **from-scratch BPE** tokenizer) live in the companion repo
-> [`llm-techniques-from-scratch`](https://github.com/LeonelSalvo/llm-techniques-from-scratch).
+> [`frontier-llm-techniques-2026-Q1`](https://github.com/LeonelSalvo/frontier-llm-techniques-2026-Q1).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # on Debian/Ubuntu use python3
@@ -107,7 +107,28 @@ The two pieces do **different jobs**, and the ablation isolates each cleanly:
 
 <sub>At nano scale these gaps are modest, but the directions are clean and the structural numbers (active params, KV cache) hold at any scale.</sub>
 
-> On method: the mutual-information probe is one clean informational angle on specialization. The MoE literature more commonly measures it by routing distribution per category, load, ablation, or predictive probing — MI here is a complement, not the field-standard method.
+### Finding 3 — micro scale, BPE, seed-averaged (the honest version)
+
+The nano findings above are single-seed and char-level, so the MI is noisy. Scaling to a **balanced
+BPE corpus** (English / real Python / Spanish, ~5M chars each, vocab 16k), a **micro** model
+(6 layers · 384 dim · 16 experts), and **averaging 3 seeds** turns the noise into error bars you can
+read. The rule: a gap is real **only if the `± std` bars don't overlap**. Architecture/routing matrix
+(`python steps/09_stack_ablation.py`, `TOKENIZER=bpe SCALE=micro SEEDS=3`), vs `BASE` = CE 4.898±0.020,
+MI 0.117±0.016:
+
+| flip vs BASE | val CE | MI (domain;expert) | verdict |
+|---|---|---|---|
+| **− load-balancing** | 4.855±0.022 | **0.158±0.021** | **MI up, bars clear** → the tradeoff, confirmed |
+| **top_k=1** | 4.931±0.022 | **0.025±0.002** | **MI craters** → top-1 kills domain specialization |
+| − QK-Norm | 4.906±0.011 | 0.092±0.004 | small MI drop (marginal) |
+| + z-loss / − sandwich / + noisy top-k | ≈ BASE | ≈ BASE | **within noise** — no claim at this budget |
+
+The headline: with error bars, the **balancing ↔ specialization tradeoff (Finding 1) holds** — removing
+load balancing raises MI beyond the noise — and **top_k=1 collapses** domain specialization. The other
+knobs are *within noise* at this budget, which is itself an honest result, not a failure. (1500 iters is
+underfit, so MoE's quality edge from Finding 2 is muted here; a longer run sharpens the marginals.)
+
+> On method: the mutual-information probe is one clean informational angle on specialization. The MoE literature more commonly measures it by routing distribution per category, load, ablation, or predictive probing — MI here is a complement, not the field-standard method. Reporting **mean ± std over seeds** is what separates a real effect from noise.
 
 ## Scope
 
@@ -117,7 +138,7 @@ This is an educational and reference implementation, not a model intended for de
 
 Three directions, roughly by effort:
 
-**Make it bigger (stop being nano).** Swap char-level for the BPE tokenizer (step 9) on a real corpus (FineWeb-Edu or a domain mix) and bump `n_layer / n_embd / block_size`. Wire the demonstrated features (steps 8–11) into the trained model: KV-cache generation, the MTP head, training with Muon. Add bf16 + `torch.compile`, gradient accumulation, and a **batched MoE kernel** — the Python expert loop is the real bottleneck, and a Triton fused kernel is the natural next exercise.
+**Make it bigger (stop being nano).** Use the BPE data pipeline (`data_prep.py` + `bpe_data.py`, `TOKENIZER=bpe`) on a balanced multi-domain corpus and bump `n_layer / n_embd / block_size`. Add bf16 + `torch.compile`, gradient accumulation, and a **batched MoE kernel** — the Python expert loop is the real bottleneck, and a Triton fused kernel is the natural next exercise. (Cross-cutting training tricks — the Muon optimizer and Multi-Token Prediction — live in the companion repo and can be wired in from there.)
 
 **Push the architecture toward the real frontier.** DeepSeek Sparse Attention (DSA) or a linear-attention / gated-DeltaNet hybrid (Qwen3-Next) for cheap long context; a Mamba/SSM block for a transformer-vs-SSM head-to-head; fine-grained experts, expert-parallel routing, capacity factors.
 

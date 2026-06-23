@@ -29,7 +29,7 @@ sparse/frontier swaps. RMSNorm, RoPE, pre-norm + residual come from the dense ba
 > and noisy top-k (`noisy_topk`). Defaults are unchanged, so the verified char-level ablation reproduces.
 >
 > Three cross-cutting techniques (Muon optimizer, MTP, from-scratch BPE) were factored out into the
-> companion repo **`llm-techniques-from-scratch`**.
+> companion repo **`frontier-llm-techniques-2026-Q1`**.
 
 ```bash
 python steps/01_moe.py     # does it print OK? → on to step 2
