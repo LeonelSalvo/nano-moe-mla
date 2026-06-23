@@ -24,6 +24,9 @@ sparse/frontier swaps. RMSNorm, RoPE, pre-norm + residual come from the dense ba
 9. **Stack ablation** — train flipping ONE architecture/routing technique at a time; print a matrix of
     val CE + MI per setting (MoE, MLA, load-balancing, z-loss, QK-Norm, sandwich-norm, noisy top-k,
     top_k=1). `SCALE=nano` smoke test / `TOKENIZER=bpe SCALE=micro SEEDS=3` for the real measurement.
+    **Every run is saved** under `results/<run-tag>/`: `metrics.csv` + `metrics.json`, `config.json`,
+    bar charts with error bars (`val_ce.png`, `mi.png`), a routing heatmap per MoE setting, and the
+    BASE model checkpoint — so a long run is never lost. (`.pt` is gitignored; the rest is kept.)
 
 > The model exposes opt-in MoE/routing flags wired in for the ablation: router z-loss (`z_loss_gamma`)
 > and noisy top-k (`noisy_topk`). Defaults are unchanged, so the verified char-level ablation reproduces.

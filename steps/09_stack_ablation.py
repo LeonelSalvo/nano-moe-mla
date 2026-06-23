@@ -14,6 +14,10 @@ and the from-scratch BPE — live in the companion repo `frontier-llm-techniques
 Val loss reported is ALWAYS the plain next-token cross-entropy (the z-loss aux term is a training
 signal, not a comparable loss), so every row is apples-to-apples.
 
+EVERY run is SAVED under results/<run-tag>/: the metrics (CSV + JSON), the plots (val-CE and MI bar
+charts with error bars, plus a routing heatmap per MoE setting), and the BASE model checkpoint — so a
+long run is never lost. (Checkpoints are .pt → gitignored; the CSV/JSON/PNG are kept for the README.)
+
 Scale (sized for a single 24 GB GPU, e.g. RTX 3090):
   SCALE=nano  (default) — fast smoke test, runs in a few minutes, metrics are tiny/noisy.
   SCALE=micro           — the real run: ~6 layers / 384 dim / 16 experts / block 512.
@@ -28,11 +32,19 @@ error bars overlap, the difference isn't significant at this scale — and that'
 """
 
 import os
+import re
+import csv
+import json
 import math
+import time
 import statistics
 import importlib.util
+from dataclasses import asdict
 import torch
 import torch.nn.functional as F
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -73,6 +85,12 @@ if TOKENIZER == "bpe":
 else:
     data = CharMultiDomain(load_domains(), BLOCK, device)
 
+# results dir for THIS run (timestamped so nothing is ever overwritten)
+RUN_TAG = f"{SCALE}_{TOKENIZER}_{ITERS}it_{SEEDS}s_{time.strftime('%Y%m%d-%H%M%S')}"
+OUT = os.path.join(HERE, "..", "results", RUN_TAG)
+os.makedirs(OUT, exist_ok=True)
+RESULTS = []   # one dict per setting, filled by train_eval
+
 
 def lr_at(it, warmup=max(20, ITERS // 50)):
     """Linear warmup → cosine decay to 10% of BASE_LR (so longer micro runs settle well)."""
@@ -104,9 +122,9 @@ def val_ce(model):
 
 @torch.no_grad()
 def measure_mi(model, cfg):
-    """I(domain; expert) in bits via the router's top-1 choice per token (all MoE layers)."""
+    """I(domain; expert) in bits + the domain×expert fraction matrix (for the heatmap)."""
     if not cfg.use_moe:
-        return None
+        return None, None
     rows = []
     for name in data.names:
         counts, captured = torch.zeros(cfg.n_experts), []
@@ -125,14 +143,16 @@ def measure_mi(model, cfg):
             h.remove()
         rows.append(counts)
     rows = torch.stack(rows)
+    frac = (rows / rows.sum(dim=1, keepdim=True)).cpu().numpy()       # each domain → its expert distribution
     joint = rows / rows.sum()
     p_dom, p_exp = joint.sum(1, keepdim=True), joint.sum(0, keepdim=True)
     mask = joint > 0
-    return (joint[mask] * (joint[mask] / (p_dom * p_exp)[mask]).log2()).sum().item()
+    mi = (joint[mask] * (joint[mask] / (p_dom * p_exp)[mask]).log2()).sum().item()
+    return mi, frac
 
 
 def run_once(cfg, seed):
-    """One full train + eval for a given seed. Returns (val CE, MI or None)."""
+    """One full train + eval for a given seed. Returns (val CE, MI, frac, model)."""
     torch.manual_seed(seed)
     model = MoeMlaGPT(cfg).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=BASE_LR, betas=(0.9, 0.95), weight_decay=0.1)
@@ -146,7 +166,9 @@ def run_once(cfg, seed):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
-    return val_ce(model), measure_mi(model, cfg)
+    ce = val_ce(model)
+    mi, frac = measure_mi(model, cfg)
+    return ce, mi, frac, model
 
 
 def _fmt(xs):
@@ -158,24 +180,107 @@ def _fmt(xs):
     return f"{m:.3f}±{statistics.pstdev(xs):.3f}"
 
 
-def train_eval(label, over):
-    """Run SEEDS times and report mean ± std — the error bar is what tells signal from noise."""
+def train_eval(label, over, keep_model=False):
+    """Run SEEDS times, report mean ± std, and record everything into RESULTS."""
     cfg = make_cfg(**over)
-    ces, mis = [], []
+    ces, mis, last_frac, kept = [], [], None, None
     for s in range(SEEDS):
-        ce, mi = run_once(cfg, 1337 + s)
+        ce, mi, frac, model = run_once(cfg, 1337 + s)
         ces.append(ce)
         if mi is not None:
             mis.append(mi)
+            last_frac = frac
+        if keep_model:
+            kept = (model, cfg)
     print(f"  {label:24s}  val CE {_fmt(ces)}   MI {_fmt(mis)}")
+    RESULTS.append(dict(label=label, ces=ces, mis=mis, frac=last_frac))
+    if kept is not None:
+        _save_checkpoint(*kept)
     return statistics.mean(ces), (statistics.mean(mis) if mis else None)
+
+
+# ----------------------------- artifact saving -----------------------------
+def _slug(s):
+    return re.sub(r"[^0-9a-zA-Z]+", "_", s).strip("_")
+
+
+def _save_checkpoint(model, cfg):
+    path = os.path.join(OUT, "ckpt_BASE.pt")
+    torch.save({"model": model.state_dict(), "cfg": asdict(cfg),
+                "tokenizer": TOKENIZER, "domains": data.names}, path)
+    print(f"  [saved] BASE checkpoint → {path}")
+
+
+def _stats(xs):
+    if not xs:
+        return None, None
+    return statistics.mean(xs), (statistics.pstdev(xs) if len(xs) > 1 else 0.0)
+
+
+def save_all():
+    # 1) run config
+    with open(os.path.join(OUT, "config.json"), "w") as f:
+        json.dump(dict(scale=SCALE, tokenizer=TOKENIZER, iters=ITERS, seeds=SEEDS, lr=BASE_LR,
+                       arch=ARCH, block_size=BLOCK, batch=BATCH, vocab_size=data.vocab_size,
+                       domains=data.names), f, indent=2)
+    # 2) metrics CSV + JSON (means, stds, and every per-seed value)
+    with open(os.path.join(OUT, "metrics.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["setting", "ce_mean", "ce_std", "mi_mean", "mi_std", "ces", "mis"])
+        for r in RESULTS:
+            cem, ces_sd = _stats(r["ces"]); mim, mis_sd = _stats(r["mis"])
+            w.writerow([r["label"], cem, ces_sd, mim, mis_sd,
+                        ";".join(f"{x:.4f}" for x in r["ces"]),
+                        ";".join(f"{x:.4f}" for x in r["mis"])])
+    with open(os.path.join(OUT, "metrics.json"), "w") as f:
+        json.dump(RESULTS, f, indent=2)
+    # 3) bar charts with error bars
+    _bar("ce", "val cross-entropy (lower = better)", os.path.join(OUT, "val_ce.png"))
+    _bar("mi", "I(domain; expert) bits (higher = more specialization)", os.path.join(OUT, "mi.png"))
+    # 4) routing heatmaps, one per MoE setting that produced a fraction matrix
+    for r in RESULTS:
+        if r["frac"] is not None:
+            _heatmap(r["frac"], r["label"], os.path.join(OUT, f"heatmap_{_slug(r['label'])}.png"))
+    print(f"\n[saved] all artifacts → {OUT}")
+    print("        metrics.csv · metrics.json · config.json · val_ce.png · mi.png · heatmap_*.png · ckpt_BASE.pt")
+
+
+def _bar(key, ylabel, path):
+    labels, means, stds = [], [], []
+    for r in RESULTS:
+        xs = r["ces"] if key == "ce" else r["mis"]
+        m, sd = _stats(xs)
+        if m is None:
+            continue
+        labels.append(r["label"]); means.append(m); stds.append(sd)
+    if not means:
+        return
+    fig, ax = plt.subplots(figsize=(max(7, len(labels) * 0.9), 4.2))
+    ax.bar(range(len(means)), means, yerr=stds, capsize=4, color="#4878a8")
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=40, ha="right", fontsize=8)
+    ax.set_ylabel(ylabel)
+    ax.set_title(f"stack ablation ({SCALE}, {TOKENIZER}, {ITERS} it, {SEEDS} seeds)")
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout(); fig.savefig(path, dpi=120); plt.close(fig)
+    print(f"  [saved] {os.path.basename(path)}")
+
+
+def _heatmap(frac, label, path):
+    fig, ax = plt.subplots(figsize=(max(6, frac.shape[1] * 0.5), 2.8))
+    im = ax.imshow(frac, aspect="auto", cmap="viridis", vmin=0, vmax=1)
+    ax.set_yticks(range(len(data.names))); ax.set_yticklabels(data.names)
+    ax.set_xticks(range(frac.shape[1])); ax.set_xticklabels([f"E{e}" for e in range(frac.shape[1])], fontsize=7)
+    ax.set_xlabel("expert"); ax.set_title(f"domain → expert  [{label}]", fontsize=9)
+    fig.colorbar(im, ax=ax, label="fraction of tokens")
+    fig.tight_layout(); fig.savefig(path, dpi=120); plt.close(fig)
 
 
 # ----------------------------- the ablation matrix -----------------------------
 if __name__ == "__main__":
     print(f"\n=== stack ablation (one technique flipped at a time, {SEEDS} seed(s)) ===")
     print("  setting                   val CE              MI(domain;expert)")
-    base = train_eval("BASE (full stack)", {})
+    base = train_eval("BASE (full stack)", {}, keep_model=True)
     train_eval("− MoE (dense FFN)", dict(use_moe=False))
     train_eval("− MLA (GQA attn)",  dict(use_mla=False))
     train_eval("− load-balancing",  dict(load_balance=False))
@@ -185,8 +290,9 @@ if __name__ == "__main__":
     train_eval("+ noisy top-k (#4)", dict(noisy_topk=True))
     train_eval("top_k=1 (Switch)",  dict(top_k=1))
 
+    save_all()
     assert base[0] < math.log(data.vocab_size), "BASE didn't learn — check the setup"
-    print("\nOK — stack matrix measured. Compare each row vs BASE, but ONLY trust gaps bigger than the ± std.")
+    print("\nOK — stack matrix measured + saved. Compare each row vs BASE; trust gaps bigger than the ± std.")
     if SEEDS == 1:
         print("    (1 seed = no error bar → noisy. Re-run with SEEDS=3 SCALE=micro TOKENIZER=bpe for real numbers.)")
     else:
