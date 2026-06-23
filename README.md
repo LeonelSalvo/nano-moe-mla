@@ -53,10 +53,12 @@ steps/
 ├── 06_routing_probe.py  # do experts specialize? domain→expert heatmap + the balancing tradeoff
 ├── 07_ablation.py       # isolate each piece: dense / +MoE / +MLA / both
 ├── 08_kv_cache.py       # real KV-cache for MLA → O(T) generation (cached == parallel)
-├── 09_bpe.py            # BPE tokenizer from scratch (exact round-trip, shorter sequences)
-├── 10_mtp.py            # Multi-Token Prediction: a 2nd head predicts t+2
-└── 11_muon.py           # the Muon optimizer (orthogonalized momentum), from scratch
+└── 09_stack_ablation.py # measure each architecture/routing technique ON vs OFF (val CE + MI matrix)
 ```
+
+> Three cross-cutting techniques (the **Muon** optimizer, **Multi-Token Prediction**, and a
+> **from-scratch BPE** tokenizer) live in the companion repo
+> [`llm-techniques-from-scratch`](https://github.com/LeonelSalvo/llm-techniques-from-scratch).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # on Debian/Ubuntu use python3

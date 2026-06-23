@@ -82,28 +82,22 @@ class CharMultiDomain:
             self.train[name], self.val[name] = d[:n], d[n:]
         self.block_size, self.device = block_size, device
 
-    def get_batch(self, split, batch_size, domain=None, want_t2=False):
+    def get_batch(self, split, batch_size, domain=None):
         """Return (x, y, dom): inputs, next-token targets, and a domain id per sequence.
         domain=None → a MIXED batch (random domain per sequence, for training).
-        domain="code" → all sequences from that one domain (for the routing probe).
-        want_t2=True → also return t+2 targets (for MTP): (x, y, t2, dom)."""
+        domain="code" → all sequences from that one domain (for the routing probe)."""
         store = self.train if split == "train" else self.val
         picks = [domain or random.choice(self.names) for _ in range(batch_size)]
-        margin = self.block_size + (2 if want_t2 else 1)         # room for the +2 target if needed
-        xs, ys, t2s, doms = [], [], [], []
+        xs, ys, doms = [], [], []
         for nm in picks:
             d = store[nm]
-            i = torch.randint(len(d) - margin, (1,)).item()
+            i = torch.randint(len(d) - self.block_size - 1, (1,)).item()
             xs.append(d[i:i + self.block_size])
             ys.append(d[i + 1:i + 1 + self.block_size])
-            if want_t2:
-                t2s.append(d[i + 2:i + 2 + self.block_size])
             doms.append(self.names.index(nm))                    # domain → integer label
         x   = torch.stack(xs).to(self.device)
         y   = torch.stack(ys).to(self.device)
         dom = torch.tensor(doms, device=self.device)
-        if want_t2:
-            return x, y, torch.stack(t2s).to(self.device), dom
         return x, y, dom
 
     def decode(self, t):

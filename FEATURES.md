@@ -14,24 +14,23 @@ ablation can turn each on/off.
 | 7 | Top-1 routing (Switch-style) | `top_k=1` | already a config knob; with top-1, load balancing matters more |
 | 3 | Router z-loss (ST-MoE) | `z_loss_gamma` | penalizes large router logits → numerical stability at scale. Opt-in (0 = off) |
 | 4 | Noisy top-k routing | `noisy_topk` / `noise_std` | jitter the selection score while training so the router explores. Opt-in |
-| 13 | Multi-Token Prediction (MTP) | `mtp` / `mtp_weight` | a 2nd head predicts t+2 (denser training signal). Opt-in; built into the model |
 
 ## ✅ Demonstrated as standalone steps (from scratch, each with a self-checking test)
 
 | # | feature | step | what it shows |
 |---|---|---|---|
 | 11 | Real KV-cache at inference for MLA | `steps/08_kv_cache.py` | incremental cache matches the parallel forward → O(T) generation |
-| 16 | BPE tokenizer | `steps/09_bpe.py` | learn merges, exact round-trip, shorter sequences than char-level |
-| 13 | Multi-Token Prediction (MTP) | `steps/10_mtp.py` | a 2nd head predicts t+2; both losses drop together |
-| 14 | Muon optimizer | `steps/11_muon.py` | orthogonalized-momentum (Newton-Schulz) drives loss down, no AdamW. **Also wireable into training:** `USE_MUON=1 python steps/04_train.py` (Muon for hidden matrices + AdamW for embeddings/head/norms) |
 
-<sub>KV-cache, BPE and MTP are demonstrated in isolation to keep the main ablation model (steps 03–07) stable and char-level for a clean comparison. Wiring BPE + MTP into the trained model is the next extension (see the wiki escalado note).</sub>
+<sub>Three cross-cutting techniques that aren't specific to this architecture — the **Muon optimizer**,
+**Multi-Token Prediction**, and the **from-scratch BPE tokenizer** — were factored out into the companion
+repo [`llm-techniques-from-scratch`](https://github.com/LeonelSalvo/llm-techniques-from-scratch).</sub>
 
 ## 🧪 Stack ablation
 
-`steps/12_stack_ablation.py` trains the model flipping ONE technique at a time and prints a matrix
-of **val CE + MI** per setting (MoE, MLA, load-balancing, z-loss, QK-Norm, sandwich-norm, noisy
-top-k, top_k=1, MTP, AdamW-vs-Muon). `SCALE=nano` (fast smoke) or `SCALE=micro` (24 GB GPU).
+`steps/09_stack_ablation.py` trains the model flipping ONE **architecture/routing** technique at a time
+and prints a matrix of **val CE + MI** per setting (MoE, MLA, load-balancing, z-loss, QK-Norm,
+sandwich-norm, noisy top-k, top_k=1). `SCALE=nano` (fast smoke) or `TOKENIZER=bpe SCALE=micro SEEDS=3`
+(the real, seed-averaged measurement).
 
 ## 🧰 Real-metrics data pipeline (BPE + balanced multi-domain)
 
@@ -39,10 +38,10 @@ For meaningful numbers (not char-level memorization), `data_prep.py` downloads a
 3-domain corpus (English / real Python from CPython / Spanish, capped to equal size) and `bpe_data.py`
 tokenizes it with BPE. Run the ablation on it with `TOKENIZER=bpe`.
 
-> **Abstraction receipt:** the from-scratch BPE is `steps/09_bpe.py` (that's the mechanism). The data
-> pipeline uses Hugging Face `tokenizers` (the same byte-level BPE, in Rust) because the naive
-> O(merges×corpus) Python version would take hours on tens of MB. From-scratch to learn it; the fast
-> version to use it — exactly the "name what the wrapper wraps" rule.
+> **Abstraction receipt:** the from-scratch BPE lives in the companion repo `llm-techniques-from-scratch`
+> (`bpe.py`) — that's the mechanism. The data pipeline here uses Hugging Face `tokenizers` (the same
+> byte-level BPE, in Rust) because the naive O(merges×corpus) Python version would take hours on tens of
+> MB. From-scratch to learn it; the fast version to use it — exactly the "name what the wrapper wraps" rule.
 
 ## ❌ Dropped (with reason)
 

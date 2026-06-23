@@ -17,20 +17,19 @@ sparse/frontier swaps. RMSNorm, RoPE, pre-norm + residual come from the dense ba
 6. **Routing probe** — does the router specialize? domain→expert heatmap + the balancing tradeoff.
 7. **Ablation** — isolate each piece on val loss: dense / +MoE / +MLA / both.
 
-**Frontier features, each demonstrated from scratch**
+**Frontier feature, demonstrated from scratch**
 8. **KV-cache for MLA** — incremental generation; cached output == parallel (O(T), not O(T²)).
-9. **BPE tokenizer** — learn merges, exact round-trip, shorter sequences than char-level.
-10. **MTP** — multi-token prediction: a 2nd head predicts t+2; both losses drop.
-11. **Muon** — the orthogonalized-momentum optimizer (Newton-Schulz), from scratch.
 
 **Measure the whole stack**
-12. **Stack ablation** — train flipping ONE technique at a time; print a matrix of val CE + MI per
-    setting (MoE, MLA, load-balancing, z-loss, QK-Norm, sandwich-norm, noisy top-k, top_k=1, MTP,
-    AdamW-vs-Muon). `SCALE=nano` smoke test / `SCALE=micro` for a real 24 GB run.
+9. **Stack ablation** — train flipping ONE architecture/routing technique at a time; print a matrix of
+    val CE + MI per setting (MoE, MLA, load-balancing, z-loss, QK-Norm, sandwich-norm, noisy top-k,
+    top_k=1). `SCALE=nano` smoke test / `TOKENIZER=bpe SCALE=micro SEEDS=3` for the real measurement.
 
-> Steps 3–7 also expose opt-in flags now wired into the model: router z-loss (`z_loss_gamma`),
-> noisy top-k (`noisy_topk`), MTP (`mtp`), and Muon in training (`USE_MUON=1 python steps/04_train.py`).
-> Defaults are unchanged, so the verified char-level ablation still reproduces.
+> The model exposes opt-in MoE/routing flags wired in for the ablation: router z-loss (`z_loss_gamma`)
+> and noisy top-k (`noisy_topk`). Defaults are unchanged, so the verified char-level ablation reproduces.
+>
+> Three cross-cutting techniques (Muon optimizer, MTP, from-scratch BPE) were factored out into the
+> companion repo **`llm-techniques-from-scratch`**.
 
 ```bash
 python steps/01_moe.py     # does it print OK? → on to step 2

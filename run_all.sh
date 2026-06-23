@@ -7,7 +7,7 @@ set -e
 cd "$(dirname "$0")"
 
 echo "### fast self-tests (seconds each) ###"
-for s in 01_moe 02_mla 03_block_model 08_kv_cache 09_bpe 10_mtp 11_muon; do
+for s in 01_moe 02_mla 03_block_model 08_kv_cache; do
   echo "--- steps/$s.py ---"
   python "steps/$s.py"
 done

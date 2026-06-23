@@ -73,7 +73,7 @@ cd nano-moe-mla && pip install -r requirements.txt
 bash run_all.sh      # every step + regenerates the figures (~15 min on one GPU)
 ```
 
-Each component is a self-checking script (`steps/01_moe.py` … `11_muon.py`). The MLA step now also
+Each component is a self-checking script (`steps/01_moe.py` … `09_stack_ablation.py`). The MLA step now also
 verifies correctness, not just that it runs: the attention weights form a valid distribution, and the
 decoupled RoPE encodes *relative* position (scores are invariant to a global position shift).
 

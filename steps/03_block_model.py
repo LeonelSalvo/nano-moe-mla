@@ -241,8 +241,6 @@ class MoeMlaConfig:
     z_loss_gamma: float = 0.0      # #3: router z-loss weight (0 = off). Keeps router logits small/stable at scale.
     noisy_topk:   bool  = False    # #4: add Gaussian noise to the router selection scores while training (exploration)
     noise_std:    float = 1.0      # std of that noise, scaled by 1/n_experts (only if noisy_topk)
-    mtp:          bool  = False    # #13: add a 2nd head predicting t+2 (Multi-Token Prediction)
-    mtp_weight:   float = 0.5      # weight of the t+2 loss (only if mtp)
 
 
 class SparseBlock(nn.Module):
@@ -294,8 +292,6 @@ class MoeMlaGPT(nn.Module):
         # WEIGHT TYING: the input table (text→vector) and the output matrix (vector→logits)
         # are the SAME tensor — one shared "dictionary" for reading and writing. Saves params.
         self.lm_head.weight = self.tok_emb.weight
-        # #13 MTP: an optional SECOND head that predicts t+2 (NOT tied). Only built if cfg.mtp.
-        self.head2 = nn.Linear(cfg.n_embd, cfg.vocab_size, bias=False) if cfg.mtp else None
         # the RoPE "rotation table" (cos/sin for the rope-part dimension). It's fixed trig,
         # NOT learned → register_buffer (travels with the model but isn't a parameter).
         # MLA rotates only the small rope-part (d_rope); GQA rotates the full head_dim
@@ -324,7 +320,7 @@ class MoeMlaGPT(nn.Module):
         idle = (cfg.n_experts - cfg.top_k) * per_expert * cfg.n_layer   # skipped experts × layers
         return total - idle
 
-    def forward(self, idx, targets=None, targets2=None):
+    def forward(self, idx, targets=None):
         B, T = idx.shape
         x = self.tok_emb(idx)                                    # (B, T, n_embd) — tokens, NO position yet
         # hand the rotation table (sliced to this sequence length) down to every block;
@@ -343,11 +339,6 @@ class MoeMlaGPT(nn.Module):
                 aux_z = sum(b.moe.aux_z for b in self.blocks if b.moe.aux_z is not None)
                 if not isinstance(aux_z, float):                 # at least one block contributed
                     loss = loss + self.cfg.z_loss_gamma * aux_z
-            # #13 MTP: add the t+2 head's loss (only if the head exists and t+2 targets are given).
-            if self.head2 is not None and targets2 is not None:
-                l2 = self.head2(x)
-                loss = loss + self.cfg.mtp_weight * F.cross_entropy(
-                    l2.reshape(B * T, -1), targets2.reshape(B * T))
         return logits, loss
 
     @torch.no_grad()

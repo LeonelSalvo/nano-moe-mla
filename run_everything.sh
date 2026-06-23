@@ -41,7 +41,7 @@ dl https://www.gutenberg.org/files/2000/2000-0.txt                       data/do
 
 # 3) self-checking component tests (seconds each) ---------------------------
 echo "### self-tests: building each piece from scratch ###"
-for s in 01_moe 02_mla 03_block_model 08_kv_cache 09_bpe 10_mtp 11_muon; do
+for s in 01_moe 02_mla 03_block_model 08_kv_cache; do
   echo "--- steps/$s.py ---"
   "$PY" "steps/$s.py"
 done
@@ -62,7 +62,7 @@ if [ "$TOKENIZER" = "bpe" ]; then
   MB_PER_DOMAIN="${MB_PER_DOMAIN:-8}" "$PY" data_prep.py
 fi
 echo "### stack ablation matrix (scale=$SCALE, tokenizer=$TOKENIZER, seeds=${SEEDS:-1}, iters=${ITERS:-default}) ###"
-SCALE="$SCALE" SEEDS="${SEEDS:-1}" TOKENIZER="$TOKENIZER" ${ITERS:+ITERS="$ITERS"} "$PY" steps/12_stack_ablation.py
+SCALE="$SCALE" SEEDS="${SEEDS:-1}" TOKENIZER="$TOKENIZER" ${ITERS:+ITERS="$ITERS"} "$PY" steps/09_stack_ablation.py
 
 echo
 echo "### DONE — everything ran (scale=$SCALE). Result images + the printed matrix above. ###"

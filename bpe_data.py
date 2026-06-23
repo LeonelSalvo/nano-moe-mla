@@ -2,9 +2,9 @@
 bpe_data.py — a BPE-tokenized multi-domain dataset (the real-metrics upgrade to step 5).
 
 Step 5 (CharMultiDomain) is char-level: tiny vocab, long sequences, fine for the mechanism demo.
-For meaningful numbers we tokenize with BPE. The from-scratch BPE lives in steps/09_bpe.py (that's
-the "how it works" receipt); here we use Hugging Face `tokenizers` (the same byte-level BPE algorithm,
-in Rust) because tokenizing tens of MB with the naive O(merges×corpus) Python version would take hours.
+For meaningful numbers we tokenize with BPE. The from-scratch BPE (the "how it works" receipt) lives
+in the companion repo `llm-techniques-from-scratch` (bpe.py); here we use Hugging Face `tokenizers`
+(the same byte-level BPE, in Rust) because tokenizing tens of MB with a naive Python BPE would take hours.
 
 Drop-in for CharMultiDomain: same interface (.names, .vocab_size, .get_batch, .decode), so the
 routing probe / step-12 ablation work unchanged. It reads every data/domains/*.txt as a domain,
@@ -67,24 +67,19 @@ class BpeMultiDomain:
         print(f"[bpe] {name}: {len(arr)/1e6:.2f}M tokens (cached)")
         return arr
 
-    def get_batch(self, split, batch_size, domain=None, want_t2=False):
+    def get_batch(self, split, batch_size, domain=None):
         store = self.train if split == "train" else self.val
         picks = [domain or random.choice(self.names) for _ in range(batch_size)]
-        margin = self.block_size + (2 if want_t2 else 1)
-        xs, ys, t2s, doms = [], [], [], []
+        xs, ys, doms = [], [], []
         for nm in picks:
             d = store[nm]
-            i = torch.randint(len(d) - margin, (1,)).item()
+            i = torch.randint(len(d) - self.block_size - 1, (1,)).item()
             xs.append(d[i:i + self.block_size])
             ys.append(d[i + 1:i + 1 + self.block_size])
-            if want_t2:
-                t2s.append(d[i + 2:i + 2 + self.block_size])
             doms.append(self.names.index(nm))
         x   = torch.stack(xs).to(self.device)
         y   = torch.stack(ys).to(self.device)
         dom = torch.tensor(doms, device=self.device)
-        if want_t2:
-            return x, y, torch.stack(t2s).to(self.device), dom
         return x, y, dom
 
     def decode(self, t):

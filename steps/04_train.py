@@ -107,28 +107,9 @@ model = MoeMlaGPT(cfg).to(device)
 print(f"[train] vocab={cfg.vocab_size}  "
       f"total={model.num_params()/1e3:.1f}K  active/token={model.active_params_per_token()/1e3:.1f}K")
 
-# Optimizer. Default = AdamW (Adam per-weight adaptive step + weight decay). Set USE_MUON=1 to
-# train the hidden weight MATRICES with Muon (step 11, orthogonalized momentum) and keep AdamW for
-# embeddings / tied lm_head / norms — the modded-nanoGPT recipe. Default path is unchanged.
-USE_MUON = os.environ.get("USE_MUON", "0") == "1"
-if USE_MUON:
-    _ms = importlib.util.spec_from_file_location("muon_mod", os.path.join(HERE, "11_muon.py"))
-    _mm = importlib.util.module_from_spec(_ms); _ms.loader.exec_module(_mm)
-    Muon = _mm.Muon
-    # Split params. tok_emb.weight IS lm_head.weight (tied) → ONE tensor, goes to AdamW only.
-    emb_ids, seen, muon_params, adamw_params = {id(model.tok_emb.weight)}, set(), [], []
-    for _n, _p in model.named_parameters():
-        if not _p.requires_grad or id(_p) in seen:
-            continue
-        seen.add(id(_p))
-        (muon_params if (_p.ndim == 2 and id(_p) not in emb_ids) else adamw_params).append(_p)
-    optimizers = [
-        Muon(muon_params, lr=lr, momentum=0.95),                       # hidden 2D matrices
-        torch.optim.AdamW(adamw_params, lr=lr, betas=(0.9, 0.95), weight_decay=0.1),  # emb/head/norms
-    ]
-    print(f"[opt] Muon+AdamW hybrid: {len(muon_params)} matrices via Muon, {len(adamw_params)} tensors via AdamW")
-else:
-    optimizers = [torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1)]
+# AdamW: Adam (per-weight adaptive step) + weight decay (regularization). betas are its
+# internal moving averages.
+optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1)
 
 
 def get_lr(it):
@@ -165,9 +146,8 @@ log.write("iter,train,val,lr\n")
 # ===================== THE TRAINING LOOP =====================
 best_val, t0 = float("inf"), time.time()
 for it in range(max_iters + 1):
-    for opt in optimizers:                            # set this step's lr from the schedule
-        for g in opt.param_groups:
-            g["lr"] = get_lr(it)
+    for g in optimizer.param_groups:                 # set this step's lr from the schedule
+        g["lr"] = get_lr(it)
 
     if it % eval_interval == 0:                       # evaluate + log + keep best checkpoint
         l = estimate_loss()
@@ -183,12 +163,10 @@ for it in range(max_iters + 1):
 
     x, y = data.get_batch("train", batch_size)        # 1) a batch
     _, loss = model(x, y)                             #    FORWARD: predict + measure loss
-    for opt in optimizers:                            #    clear old gradients
-        opt.zero_grad(set_to_none=True)
+    optimizer.zero_grad(set_to_none=True)             #    clear old gradients
     loss.backward()                                   # 2) BACKWARD: gradients
     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)   # cut giant gradients
-    for opt in optimizers:                            # 3) UPDATE: move the weights
-        opt.step()
+    optimizer.step()                                  # 3) UPDATE: move the weights
 
 log.close()
 print(f"[train] done in {(time.time()-t0)/60:.1f} min. Best val loss: {best_val:.4f}")

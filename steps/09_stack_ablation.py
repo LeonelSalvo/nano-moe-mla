@@ -1,25 +1,28 @@
 """
-STEP 12 — Stack ablation: measure each technique ON vs OFF
-==========================================================
+STEP 9 — Stack ablation: measure each ARCHITECTURE technique ON vs OFF
+=====================================================================
 
 Trains the SAME model on the multi-domain corpus (step 5) under different settings, flipping
 ONE technique at a time, and prints a matrix:  setting → val loss (pure next-token CE) + MI.
 
-Techniques covered: MoE, MLA, load-balancing (#1), router z-loss (#3), QK-Norm (#5),
-sandwich-norm (#9), noisy top-k (#4), top_k=1 vs 2, MTP (#13), and AdamW vs Muon (#14).
+Architecture / routing techniques covered: MoE, MLA, load-balancing (#1), router z-loss (#3),
+QK-Norm (#5), sandwich-norm (#9), noisy top-k (#4), and top_k=1 vs 2.
 
-Val loss reported is ALWAYS the plain next-token cross-entropy (the aux terms — z-loss, MTP —
-are training signals, not comparable losses), so every row is apples-to-apples.
+(Cross-cutting techniques that are NOT specific to this architecture — the Muon optimizer, MTP,
+and the from-scratch BPE — live in the companion repo `llm-techniques-from-scratch`.)
+
+Val loss reported is ALWAYS the plain next-token cross-entropy (the z-loss aux term is a training
+signal, not a comparable loss), so every row is apples-to-apples.
 
 Scale (sized for a single 24 GB GPU, e.g. RTX 3090):
   SCALE=nano  (default) — fast smoke test, runs in a few minutes, metrics are tiny/noisy.
   SCALE=micro           — the real run: ~6 layers / 384 dim / 16 experts / block 512.
-For meaningful MI, download real domain files first (see steps/05_multidomain.py) and SCALE=micro.
+For meaningful MI, build a real BPE corpus first (data_prep.py) and use TOKENIZER=bpe SCALE=micro.
 
-Run:  python steps/12_stack_ablation.py                  # nano, 1 seed (fast smoke)
-      SEEDS=3 SCALE=micro python steps/12_stack_ablation.py   # the real measurement, mean ± std
+Run:  python steps/09_stack_ablation.py                       # nano, 1 seed (fast smoke)
+      SEEDS=3 SCALE=micro TOKENIZER=bpe python steps/09_stack_ablation.py   # the real measurement
 
-Knobs (env): SCALE=nano|micro · SEEDS=N (runs per setting → error bar) · LR=3e-4.
+Knobs (env): SCALE=nano|micro · SEEDS=N (runs per setting → error bar) · ITERS · TOKENIZER=char|bpe · LR.
 Reporting mean ± std over seeds is what separates a real effect from noise: if two settings'
 error bars overlap, the difference isn't significant at this scale — and that's an honest result.
 """
@@ -41,10 +44,8 @@ def _load(name, filename):
 
 m3 = _load("mola_model", "03_block_model.py")
 m5 = _load("mola_data",  "05_multidomain.py")
-mMuon = _load("muon_mod", "11_muon.py")
 MoeMlaGPT, MoeMlaConfig = m3.MoeMlaGPT, m3.MoeMlaConfig
 CharMultiDomain, load_domains = m5.CharMultiDomain, m5.load_domains
-Muon = mMuon.Muon
 
 device  = "cuda" if torch.cuda.is_available() else "cpu"
 SCALE   = os.environ.get("SCALE", "nano")
@@ -87,31 +88,18 @@ def make_cfg(**over):
     return MoeMlaConfig(**base)
 
 
-def build_optimizers(model, lr, use_muon):
-    """AdamW (default) or Muon (hidden 2D matrices) + AdamW (embeddings/tied head/norms)."""
-    if not use_muon:
-        return [torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1)]
-    emb_ids, seen, muon_p, adamw_p = {id(model.tok_emb.weight)}, set(), [], []
-    for _n, p in model.named_parameters():
-        if not p.requires_grad or id(p) in seen:
-            continue
-        seen.add(id(p))
-        (muon_p if (p.ndim == 2 and id(p) not in emb_ids) else adamw_p).append(p)
-    return [Muon(muon_p, lr=lr, momentum=0.95),
-            torch.optim.AdamW(adamw_p, lr=lr, betas=(0.9, 0.95), weight_decay=0.1)]
-
-
 @torch.no_grad()
 def val_ce(model):
     """Pure next-token cross-entropy on val — the comparable number (ignores aux terms)."""
     model.eval()
     tot = 0.0
-    for _ in range(EVAL // 10 or 5):
+    n = EVAL // 10 or 5
+    for _ in range(n):
         x, y, _ = data.get_batch("val", BATCH, domain=None)
         logits, _ = model(x)
         tot += F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.reshape(-1)).item()
     model.train()
-    return tot / (EVAL // 10 or 5)
+    return tot / n
 
 
 @torch.no_grad()
@@ -143,30 +131,21 @@ def measure_mi(model, cfg):
     return (joint[mask] * (joint[mask] / (p_dom * p_exp)[mask]).log2()).sum().item()
 
 
-def run_once(cfg, use_muon, seed):
+def run_once(cfg, seed):
     """One full train + eval for a given seed. Returns (val CE, MI or None)."""
     torch.manual_seed(seed)
     model = MoeMlaGPT(cfg).to(device)
-    opts = build_optimizers(model, lr=BASE_LR, use_muon=use_muon)
-    want_t2 = cfg.mtp
+    opt = torch.optim.AdamW(model.parameters(), lr=BASE_LR, betas=(0.9, 0.95), weight_decay=0.1)
     model.train()
     for it in range(ITERS):
-        lr = lr_at(it)                                   # warmup → cosine schedule
-        for o in opts:
-            for g in o.param_groups:
-                g["lr"] = lr
-        if want_t2:
-            x, y, t2, _ = data.get_batch("train", BATCH, domain=None, want_t2=True)
-            _, loss = model(x, y, t2)
-        else:
-            x, y, _ = data.get_batch("train", BATCH, domain=None)
-            _, loss = model(x, y)
-        for o in opts:
-            o.zero_grad(set_to_none=True)
+        for g in opt.param_groups:                       # warmup → cosine schedule
+            g["lr"] = lr_at(it)
+        x, y, _ = data.get_batch("train", BATCH, domain=None)
+        _, loss = model(x, y)
+        opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        for o in opts:
-            o.step()
+        opt.step()
     return val_ce(model), measure_mi(model, cfg)
 
 
@@ -179,12 +158,12 @@ def _fmt(xs):
     return f"{m:.3f}±{statistics.pstdev(xs):.3f}"
 
 
-def train_eval(label, over, use_muon=False):
+def train_eval(label, over):
     """Run SEEDS times and report mean ± std — the error bar is what tells signal from noise."""
     cfg = make_cfg(**over)
     ces, mis = [], []
     for s in range(SEEDS):
-        ce, mi = run_once(cfg, use_muon, 1337 + s)
+        ce, mi = run_once(cfg, 1337 + s)
         ces.append(ce)
         if mi is not None:
             mis.append(mi)
@@ -197,20 +176,18 @@ if __name__ == "__main__":
     print(f"\n=== stack ablation (one technique flipped at a time, {SEEDS} seed(s)) ===")
     print("  setting                   val CE              MI(domain;expert)")
     base = train_eval("BASE (full stack)", {})
-    train_eval("− MoE (dense FFN)",      dict(use_moe=False))
-    train_eval("− MLA (GQA attn)",       dict(use_mla=False))
-    train_eval("− load-balancing",       dict(load_balance=False))
-    train_eval("+ z-loss (#3)",          dict(z_loss_gamma=1e-3))
-    train_eval("− QK-Norm",              dict(qk_norm=False))
-    train_eval("− sandwich-norm",        dict(post_norm=False))
-    train_eval("+ noisy top-k (#4)",     dict(noisy_topk=True))
-    train_eval("top_k=1 (Switch)",       dict(top_k=1))
-    train_eval("+ MTP (#13)",            dict(mtp=True))
-    train_eval("Muon optimizer (#14)",   {}, use_muon=True)
+    train_eval("− MoE (dense FFN)", dict(use_moe=False))
+    train_eval("− MLA (GQA attn)",  dict(use_mla=False))
+    train_eval("− load-balancing",  dict(load_balance=False))
+    train_eval("+ z-loss (#3)",     dict(z_loss_gamma=1e-3))
+    train_eval("− QK-Norm",         dict(qk_norm=False))
+    train_eval("− sandwich-norm",   dict(post_norm=False))
+    train_eval("+ noisy top-k (#4)", dict(noisy_topk=True))
+    train_eval("top_k=1 (Switch)",  dict(top_k=1))
 
     assert base[0] < math.log(data.vocab_size), "BASE didn't learn — check the setup"
     print("\nOK — stack matrix measured. Compare each row vs BASE, but ONLY trust gaps bigger than the ± std.")
     if SEEDS == 1:
-        print("    (1 seed = no error bar → noisy. Re-run with SEEDS=3 SCALE=micro for a real measurement.)")
+        print("    (1 seed = no error bar → noisy. Re-run with SEEDS=3 SCALE=micro TOKENIZER=bpe for real numbers.)")
     else:
         print("    (overlapping error bars between two rows = the difference is within noise at this scale.)")
