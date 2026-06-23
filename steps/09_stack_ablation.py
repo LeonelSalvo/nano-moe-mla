@@ -223,7 +223,13 @@ def save_all():
         json.dump(dict(scale=SCALE, tokenizer=TOKENIZER, iters=ITERS, seeds=SEEDS, lr=BASE_LR,
                        arch=ARCH, block_size=BLOCK, batch=BATCH, vocab_size=data.vocab_size,
                        domains=data.names), f, indent=2)
-    # 2) metrics CSV + JSON (means, stds, and every per-seed value)
+    # 2) the PLOTS first (the visual artifacts — written before anything that could fail)
+    _bar("ce", "val cross-entropy (lower = better)", os.path.join(OUT, "val_ce.png"))
+    _bar("mi", "I(domain; expert) bits (higher = more specialization)", os.path.join(OUT, "mi.png"))
+    for r in RESULTS:
+        if r["frac"] is not None:
+            _heatmap(r["frac"], r["label"], os.path.join(OUT, f"heatmap_{_slug(r['label'])}.png"))
+    # 3) metrics CSV (means, stds, and every per-seed value)
     with open(os.path.join(OUT, "metrics.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["setting", "ce_mean", "ce_std", "mi_mean", "mi_std", "ces", "mis"])
@@ -232,15 +238,11 @@ def save_all():
             w.writerow([r["label"], cem, ces_sd, mim, mis_sd,
                         ";".join(f"{x:.4f}" for x in r["ces"]),
                         ";".join(f"{x:.4f}" for x in r["mis"])])
+    # 4) metrics JSON — convert the frac ndarray to a list so it's JSON-serializable
+    serializable = [{**r, "frac": (r["frac"].tolist() if r["frac"] is not None else None)}
+                    for r in RESULTS]
     with open(os.path.join(OUT, "metrics.json"), "w") as f:
-        json.dump(RESULTS, f, indent=2)
-    # 3) bar charts with error bars
-    _bar("ce", "val cross-entropy (lower = better)", os.path.join(OUT, "val_ce.png"))
-    _bar("mi", "I(domain; expert) bits (higher = more specialization)", os.path.join(OUT, "mi.png"))
-    # 4) routing heatmaps, one per MoE setting that produced a fraction matrix
-    for r in RESULTS:
-        if r["frac"] is not None:
-            _heatmap(r["frac"], r["label"], os.path.join(OUT, f"heatmap_{_slug(r['label'])}.png"))
+        json.dump(serializable, f, indent=2)
     print(f"\n[saved] all artifacts → {OUT}")
     print("        metrics.csv · metrics.json · config.json · val_ce.png · mi.png · heatmap_*.png · ckpt_BASE.pt")
 

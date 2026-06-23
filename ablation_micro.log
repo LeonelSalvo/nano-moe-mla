@@ -1,18 +1,1 @@
-[ablation] scale=micro  tokenizer=bpe  device=cuda  iters=1500  seeds=3
-
-=== stack ablation (one technique flipped at a time, 3 seed(s)) ===
-  setting                   val CE              MI(domain;expert)
-  BASE (full stack)         val CE 4.898±0.020   MI 0.117±0.016
-  − MoE (dense FFN)         val CE 4.944±0.036   MI    —   
-  − MLA (GQA attn)          val CE 4.868±0.018   MI 0.108±0.007
-  − load-balancing          val CE 4.855±0.022   MI 0.158±0.021
-  + z-loss (#3)             val CE 4.861±0.028   MI 0.125±0.011
-  − QK-Norm                 val CE 4.906±0.011   MI 0.092±0.004
-  − sandwich-norm           val CE 4.879±0.023   MI 0.089±0.022
-  + noisy top-k (#4)        val CE 4.882±0.037   MI 0.138±0.055
-  top_k=1 (Switch)          val CE 4.931±0.022   MI 0.025±0.002
-  + MTP (#13)               val CE 4.922±0.030   MI 0.122±0.023
-  Muon optimizer (#14)      val CE 4.779±0.044   MI 0.187±0.039
-
-OK — stack matrix measured. Compare each row vs BASE, but ONLY trust gaps bigger than the ± std.
-    (overlapping error bars between two rows = the difference is within noise at this scale.)
+nohup: no se tendrá en cuenta la entrada

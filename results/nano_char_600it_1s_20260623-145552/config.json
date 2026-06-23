@@ -1,0 +1,26 @@
+{
+  "scale": "nano",
+  "tokenizer": "char",
+  "iters": 600,
+  "seeds": 1,
+  "lr": 0.0003,
+  "arch": {
+    "n_layer": 4,
+    "n_head": 4,
+    "head_dim": 16,
+    "n_embd": 64,
+    "n_experts": 8,
+    "top_k": 2,
+    "n_shared": 1,
+    "d_rope": 8,
+    "d_latent": 32
+  },
+  "block_size": 128,
+  "batch": 32,
+  "vocab_size": 116,
+  "domains": [
+    "shakespeare",
+    "code",
+    "spanish"
+  ]
+}
