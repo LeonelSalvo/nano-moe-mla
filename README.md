@@ -128,13 +128,9 @@ load balancing raises MI beyond the noise — and **top_k=1 collapses** domain s
 knobs are *within noise* at this budget, which is itself an honest result, not a failure. (1500 iters is
 underfit, so MoE's quality edge from Finding 2 is muted here; a longer run sharpens the marginals.)
 
-<p align="center">
-  <img src="ablation_micro_val_ce.png" width="49%" alt="val CE per setting, with error bars" />
-  <img src="ablation_micro_mi.png" width="49%" alt="MI per setting, with error bars" />
-</p>
-
-<sub>Bar charts with ± std over 3 seeds (read a gap only if the error bars don't overlap). Every run also
-saves a routing heatmap per setting + the BASE checkpoint under <code>results/&lt;run&gt;/</code>.</sub>
+<sub>Run <code>TOKENIZER=bpe SCALE=micro SEEDS=3 python steps/09_stack_ablation.py</code> to reproduce: it
+saves bar charts with ± std, a routing heatmap per setting, and the BASE checkpoint under
+<code>results/&lt;run&gt;/</code>.</sub>
 
 > On method: the mutual-information probe is one clean informational angle on specialization. The MoE literature more commonly measures it by routing distribution per category, load, ablation, or predictive probing — MI here is a complement, not the field-standard method. Reporting **mean ± std over seeds** is what separates a real effect from noise.
 
